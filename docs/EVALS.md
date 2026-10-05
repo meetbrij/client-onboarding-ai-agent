@@ -1,6 +1,8 @@
 # Evals
 
-Status: **design only. No eval has been run; there are no numbers.** README may quote only values from files in
+Status: **design only, and deferred until P3's KYC service is live (D-15, Phase 3b). No eval has been run; there are no numbers.**
+When it runs, cases go through the live KYC service with SPECIMEN documents, so `kyc_response` below becomes a recorded
+fallback for unit tests only, and extraction quality becomes part of what is measured end to end. README may quote only values from files in
 `evals/results/`.
 
 ## What is being measured, and what is not

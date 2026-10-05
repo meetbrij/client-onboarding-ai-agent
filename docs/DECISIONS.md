@@ -1,6 +1,6 @@
 # Decisions
 
-Format follows MIA's `docs/DECISIONS.md` (decision, why, status). All entries are **Proposed** until the user approves them.
+Format follows MIA's `docs/DECISIONS.md` (decision, why, status). Status is **Proposed** until the user accepts it; accepted entries are marked.
 D-01 to D-07 are the seven open decisions from the brief (D-01 repo, D-02 DB, D-04 pipeline, D-05 sanctions source,
 D-06 fuzzy matching, D-07 Langfuse, D-09 UI; D-03 and D-08 are new and D-10 onward came out of reading P3 and MIA).
 
@@ -35,7 +35,7 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   package `onboarding`. ECR repo `client-onboarding`. K8s resources prefixed `onboarding-`.
 - **Consequence:** The new repo has a different GitHub OIDC `sub` (owner@id/repo@id form, per P3 CLAUDE.md), so P3's deploy
   roles will not trust it. See D-03.
-- **Status:** Proposed (effectively decided by the user).
+- **Status:** Accepted (user, 2026-10-05).
 
 ### D-02 · Checkpointer and audit database: in-cluster Postgres StatefulSet
 - **Options:** (a) Postgres StatefulSet in qa/prod; (b) reuse P3's MySQL.
@@ -49,18 +49,31 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   only detectable if the head hash is anchored elsewhere (we write it to the case trace and a log line at case end).
 - **Status:** Proposed.
 
-### D-03 · Infrastructure changes live in a small Terraform overlay in this repo, not in P3
-- **Context:** P3's CLAUDE.md says the pipeline is frozen and its ECR repo is a single immutable `nodejs-app` repo. P3's
-  `app-env` module creates deploy roles bound to P3's repo claim, ESO roles limited to `<env>/mysql-secret`, and a Bedrock
-  IRSA role (`kyc-app`) limited to the two `in.` profiles.
-- **We need:** our own ECR repo, deploy roles trusting our repo (qa: `ref:refs/heads/qa`; prod: `environment:prod`), an IRSA
-  role for our service account to invoke Haiku 4.5, secret shells (`pg-secret`, `langfuse-keys`, officer tokens), ESO read
-  access to them.
-- **Recommendation:** `infra/terraform/` here, reading P3's remote state (`platform` outputs: cluster, OIDC provider ARNs) and
-  referencing the namespaces as data sources. P3 stays untouched except, at most, a quota bump (D-10) and an ACM SAN for our
-  hostnames, which are tiny `tfvars` changes the user applies.
-- **Alternative:** extend P3's `app-env` module. Tighter reuse, but edits a frozen repo and couples two projects' blast radius.
-- **Status:** Proposed.
+### D-03 · Our own Terraform stack in this repo; P3 is read, never modified (user-approved, expanded)
+- **Context:** P3's pipeline is frozen and its ECR repo is a single immutable `nodejs-app`. Its `app-env` module creates
+  deploy roles bound to P3's repo claim, ESO roles limited to `<env>/mysql-secret`, and a Bedrock IRSA role limited to its two
+  `in.` profiles.
+- **Decision:** `infra/terraform/` (own state key, own backend config) creates everything this project owns:
+  - ECR repo `client-onboarding` (immutable tags, scan on push, lifecycle like P3's);
+  - namespaces `onboarding-qa` / `onboarding-prod` with quotas (D-10);
+  - deploy roles trusting this repo: qa `ref:refs/heads/qa`, prod `environment:prod` (using the immutable-ID subject form
+    from P3's CLAUDE.md, read from a real token if it fails), with EKS access entries scoped to our namespaces and a Role for
+    ESO CRDs, as P3 does;
+  - an IRSA role and service account for Bedrock (`bedrock:InvokeModel` on the Haiku 4.5 profile and its underlying
+    models only, same condition pattern as P3);
+  - Secrets Manager secret shells `<env>/onboarding/pg-secret`, `.../langfuse-keys`, `.../officer-tokens` (values set
+    out-of-band, never in state), plus an ESO IAM role per environment that can read only those;
+  - its own ACM certificate for our two hostnames, DNS-validated in the shared Route 53 zone (the ALB controller finds
+    certificates by hostname, so P3's certificate does not need a new SAN);
+  - Route 53 alias records for the hostnames, created by Terraform once the ALB exists (data lookup), or by hand like P3
+    if that proves awkward.
+- **Hostnames (proposal):** `qa-proj4-onboarding.bolarbrijesh.com` and `proj4-onboarding.bolarbrijesh.com`, following P3's
+  `qa-proj3-aigateway` / `proj3-aigateway` pattern. Zone: data source, never created or destroyed.
+- **How we read P3:** `data` sources by cluster name (`aws_eks_cluster`, OIDC provider ARN from the cluster), not
+  `terraform_remote_state`, so we don't depend on P3's state bucket layout or credentials.
+- **Independence:** `terraform destroy` here removes only our resources. P3 is unaffected, except that our Ingresses leave the
+  shared ALB group.
+- **Status:** Accepted (user approved the scope on 2026-10-05); namespace part follows D-10.
 
 ### D-04 · Pipeline reuse: copy, do not `workflow_call`
 - **Verified:** P3's `qa-cicd.yml` and `prod-cd.yaml` have no `workflow_call` trigger; they hardcode `IMAGE_NAME: nodejs-app`,
@@ -72,7 +85,7 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   roles and variables. Copy the two files, replace the app-specific values by `env:` at the top, and put a comment with the P3
   commit SHA copied from. Add one job: the deterministic eval gate after tests.
 - **Honest consequence:** two copies can drift. Accepted; documented in KNOWN_LIMITATIONS.
-- **Status:** Proposed.
+- **Status:** Accepted (user, 2026-10-05).
 
 ### D-05 · Sanctions source: UN Consolidated List at launch; OFAC SDN as a stretch
 - **Reasoning:** UN lists are what UAE institutions are directly required to act on, they are free, and the XML carries
@@ -82,7 +95,7 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   (`entry_id, source, names[], aliases[], dobs[], nationalities[], list_date`) so adding OFAC is a loader plus a manifest entry.
   Add OFAC only if Phase 3 finishes early. This also keeps the claim honest ("screens against the UN Consolidated List").
 - **Needs checking at build time:** current download URL and license/terms of the UN list file, recorded in the manifest.
-- **Status:** Proposed.
+- **Status:** Accepted (user, 2026-10-05).
 
 ### D-06 · Fuzzy matching: rapidfuzz `token_sort_ratio` plus corroboration
 - **Recommendation:** Normalise (Unicode NFKD, casefold, strip punctuation and honorifics, collapse whitespace) then score each
@@ -96,7 +109,7 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
 - **Threshold honesty:** thresholds are tuned on a separate dev set of 10 variant names, not on the 12 eval cases, and the
   chosen values are recorded in `data/reference/screening_config.yaml` with the dev-set result. With 12 eval cases, precision and
   recall are illustrative, not statistical; EVALS.md says so.
-- **Status:** Proposed.
+- **Status:** Accepted (user, 2026-10-05).
 
 ### D-07 · Langfuse: Cloud for now, self-host not recommended
 - **Reasoning:** Self-hosting Langfuse v3 means ClickHouse, Redis, an object store and web/worker pods, on a 2-node t3a.large
@@ -109,7 +122,7 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   options.
 - **Fallbacks:** if Langfuse is down, tracing is off and prompts come from `prompts/` (version recorded as
   `local-fallback`).
-- **Status:** Proposed.
+- **Status:** Accepted (user, 2026-10-05).
 
 ### D-08 · Officer identity and separation of duties: static per-officer API tokens
 - **Context:** MIA uses Entra ID; we have no IdP in P3.
@@ -117,30 +130,45 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   `decided_by` recorded in the audit row; an officer cannot decide a case they submitted (MIA D-62). The UI states that this is
   a stand-in for the bank's SSO. Cognito/OIDC is the production answer and is listed as out of scope.
 - **Alternative:** no auth, API key only (P3's pattern). Weaker: no attributable human decision, which is the core control.
-- **Status:** Proposed.
+- **Status:** Accepted (user, 2026-10-05).
 
 ### D-09 · Officer UI: yes, minimal and server-rendered
 - **Recommendation:** Build it (Phase 3), because a human-approval workflow is much easier to judge when you can see the
   officer page. Jinja templates, no JS framework, strict CSP (`default-src 'none'`, self-hosted CSS, form posts with a CSRF
   token), values rendered as text. About four pages. It is cut item 4 if behind.
-- **Status:** Proposed.
+- **Status:** Accepted (user, 2026-10-05).
 
-### D-10 · Share P3's `qa` and `prod` namespaces; measure capacity first
-- **Verified:** P3's `app-env` module sets a per-namespace ResourceQuota (defaults: 1 CPU / 2Gi requests, 3Gi limits, 20 pods,
-  3 PVCs, 10Gi storage; prod overrides storage to 20Gi). Existing requests: qa about 350m / 704Mi; prod about 450m / 896Mi
-  (2 KYC replicas plus MySQL). The cluster is 2 x t3a.large carrying monitoring too.
-- **Our requests (estimate):** agent 100m / 192Mi, mock-bank 50m / 96Mi, Postgres 250m / 512Mi. Prod then sits near 850m / 1.7Gi
-  of 1 CPU / 2Gi. Tight but feasible; qa PVC storage hits exactly 10Gi.
-- **Recommendation:** share the namespaces (the brief and P3's IAM scoping assume them), keep requests small, and raise the
-  quota by `tfvars` (D-03) if Phase 4 measurement shows pressure. Alternative is `onboarding-qa/-prod` namespaces, which
-  needs new deploy-role scoping.
-- **Status:** Proposed.
+### D-10 · Namespaces: our own (`onboarding-qa`, `onboarding-prod`), on P3's cluster (revised)
+- **Why the original recommendation (share P3's `qa`/`prod`) no longer makes sense:** with a separate Terraform stack (D-03),
+  shared namespaces break independent teardown. The Postgres StatefulSet, PVCs, Deployments and Ingresses are applied by the
+  pipeline (`kubectl apply -k`), not Terraform, so `terraform destroy` on our stack would leave them orphaned inside P3's
+  namespaces, and the quota there is owned by P3's state. Sharing also means our Postgres competes with P3's MySQL for P3's
+  quota (verified: defaults 1 CPU / 2Gi requests, 20 pods, 3 PVCs; prod near 450m / 896Mi already).
+- **Recommendation:** our Terraform stack creates `onboarding-qa` and `onboarding-prod` with their own ResourceQuota and
+  LimitRange, ESO SecretStore service account, and the deploy-role access entries scoped to those namespaces. Destroying the
+  stack deletes the namespaces and everything in them. The brief's "qa and prod" is satisfied as environments; only the
+  namespace names differ.
+- **What we still share from P3 (read via data sources, never modified):** the EKS cluster and its nodes, the OIDC provider
+  (IRSA), the GitHub OIDC provider (account-wide), the External Secrets and ALB controller operators, the EBS CSI driver and
+  StorageClasses (`ebs-sc`, `ebs-sc-retain`), the shared ALB ingress group, Tempo/Prometheus/Loki, the Route 53 zone.
+- **Capacity:** two t3a.large nodes carry P3 and monitoring already. Measure free allocatable CPU/memory before Phase 4. If
+  short, the fix is a node-group size bump, which is a P3 change; say so then.
+- **Hard dependency to document:** destroying P3's platform stack destroys the cluster under us. Independence is of
+  *teardown of our resources*, not of the cluster's existence.
+- **Alternative (a fully separate cluster):** true isolation, but roughly the cost of another EKS control plane (about $73 a
+  month at list price, check current pricing) plus nodes and NAT, duplicated add-ons and observability, and the KYC call
+  would no longer be in-cluster. Not recommended for a portfolio project.
+- **Status:** Proposed; waiting for the user.
 
-### D-11 · One image, two Deployments
-- **Reason:** P3's contract is "single image per commit"; more images would be a pipeline change. mock-bank is a few hundred
-  lines. Same image, `command:` selects `onboarding-api` or `onboarding-mock-bank`.
-- **Consequence:** the mock bank is not independently versioned. Acceptable: it is a mock.
-- **Status:** Proposed.
+### D-11 · One image, two Deployments (revisited: P3's single-image rule no longer binds us)
+- **Context:** the original reason was P3's "single image per commit" contract. Because we copy the pipeline (D-04), that
+  contract is ours to change.
+- **Options:** (a) one image, `command:` selects `onboarding-api` or `onboarding-mock-bank`; (b) two images: matrix build, two
+  ECR repos, two Trivy scans and SBOMs, two kustomize image entries, two retags in the prod workflow.
+- **Recommendation:** still (a). The mock bank is a few hundred lines that exists only to be called; (b) doubles pipeline surface
+  for no real benefit. The mock bank's independence is shown by being a separate Deployment/Service with its own database
+  schema and its own idempotency store. Cheap to reverse later.
+- **Status:** Proposed; waiting for the user.
 
 ### D-12 · Run the graph in the API process; recover at startup; no Redis/arq
 - **Reasoning:** MIA's arq worker adds Redis and a second process. Case runs here take seconds, not minutes, and pause on a
@@ -172,13 +200,19 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   (even a clean case needs a human click).
 - **Status:** Proposed. Rating aggregation (max severity) and the rule thresholds are specified in `rules/README` in Phase 2.
 
-### D-15 · Evals use recorded KYC responses, not the live service
-- **Reason:** P3's accuracy eval is blocked on Bedrock quota, and its committed `app/eval/results/RESULTS.md` is an all-failed
-  run (0 of 18 documents processed). We cannot depend on the live KYC service for the eval, and we must not cite P3's numbers.
-- **Decision:** each eval case carries a KYC response shaped exactly like P3's `DocumentOut` (`fields[]` with `confidence`,
-  `needs_review`, `reason`; document `status`). EVALS.md states that extraction accuracy is out of scope and is P3's metric.
-  One cluster smoke test calls the real KYC service.
-- **Status:** Proposed.
+### D-15 · Evals deferred until P3's KYC service is live; then run end to end against it
+- **Decision (user, 2026-10-05):** hold the eval harness and first run until P3's KYC service works (its Bedrock quota is
+  still 0, so it returns 502, and its committed `app/eval/results/RESULTS.md` is an all-failed run: 0 of 18 processed; we must
+  not cite it).
+- **Consequence:** the eval phase moves out of Phase 3 into its own Phase 3b, gated on a green KYC `POST /documents`.
+  Graph, rule and audit tests still run now, using a small recorded-KYC fake shaped like P3's `DocumentOut` (`fields[]` with
+  `confidence`, `needs_review`, `reason`; document `status`). That is test scaffolding, not an eval.
+- **Better eval when it runs:** cases send SPECIMEN documents to the live KYC service, so decision accuracy is measured end to
+  end (extraction included). That needs our own generator for specimen documents carrying our synthetic names (P3's golden
+  set cannot carry sanctions-variant names), a bit more work than recorded responses; EVALS.md notes it.
+- **Cost of waiting:** the resume claim "decision and trajectory evals with measured numbers" and the README numbers are not
+  true until Phase 3b. The CI eval gate also waits.
+- **Status:** Accepted (deferral); details revisit at Phase 3b.
 
 ### D-16 · Manifests: kustomize, not Helm
 - **Reason:** P3's pipeline uses `kubectl apply -k` and rewrites the image in `kustomization.yaml`; MIA's Helm chart targets a
@@ -201,4 +235,4 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   `SPECIMEN`; the applicant is a fixture, not presented as that person. Prefer an old, well-known entry. Never use these
   fixtures in screenshots without the SPECIMEN banner. If this feels wrong, switch to name-only variants and drop DOB/nationality
   corroboration from the true-hit case (the DOB-mismatch case still covers corroboration).
-- **Status:** Proposed.
+- **Status:** Accepted (user, 2026-10-05).

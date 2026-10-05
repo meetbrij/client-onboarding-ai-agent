@@ -39,7 +39,7 @@ data/sanctions/        dated snapshot + manifest (source, date, sha256); scripts
 data/reference/        high-risk jurisdictions and occupations (dated, sourced)
 prompts/               local fallback copies of the Langfuse prompts
 evals/                 cases/*.yaml, run.py, metrics.py, judge.py, results/<date>.json
-k8s/{qa,prod}/         kustomize, P3 pattern     infra/terraform/   small overlay stack (see DECISIONS D-03, D-10)
+k8s/{qa,prod}/         kustomize, P3 pattern     infra/terraform/   our own stack on P3's cluster (D-03, D-10)
 .github/workflows/     copied and adapted from P3
 Dockerfile  docker-compose.yml  pyproject.toml  tests/
 ```
@@ -51,8 +51,8 @@ docker compose up -d --build                 # api :8000, mock-bank :8001, postg
 uv run python scripts/load_sanctions.py      # rebuild index from data/sanctions snapshot (never run in prod)
 uv run pytest                                # offline: fake LLM, fake KYC, SQLite/ephemeral Postgres
 uv run ruff check . && uv run mypy app tests
-uv run python -m evals.run --deterministic   # CI gate: fake LLM, decision + trajectory + sanctions metrics
-uv run python -m evals.run --live            # real Bedrock + Langfuse; writes evals/results/<date>.json
+# evals are deferred until P3's KYC service is live (D-15, Phase 3b):
+uv run python -m evals.run --live            # live KYC + Bedrock + Langfuse; writes evals/results/<date>.json
 uv run python -m onboarding.audit verify     # verify_audit_chain: exits non-zero and prints first broken row
 uv run python -m onboarding.graph.build --case evals/cases/clean_approve.yaml --decision approve   # one case, scripted human
 # deploy: push to qa => QA pipeline; PR qa -> main => prod pipeline, approval-gated retag (see PLAN Phase 4)
@@ -118,8 +118,8 @@ audit_head: str                   # row_hash of the last audit row written for t
 - **Bedrock quota:** P3's account has per-minute quota 0 for Anthropic models until raised; calls throttle (the deployed KYC
   service returns 502). Run LLM calls sequentially with exponential backoff and jitter; support a cross-region inference
   profile via `BEDROCK_MODEL_ID`. P3 uses `in.` (India-only) profiles: never silently switch to `global.`.
-- **Shared namespaces:** qa/prod hold P3's resources and a ResourceQuota (CPU, memory, 3 PVCs). Name everything `onboarding-*`;
-  P3's Deployment is `nodejs-app`, Service `nodejs-service`, labels `app: nodejs-app`.
+- **Own namespaces on P3's cluster:** `onboarding-qa` / `onboarding-prod`, created by `infra/terraform` (D-03, D-10). P3's cluster,
+  operators, ALB group and Route 53 zone are read via data sources and never modified. Destroying our stack must not touch P3.
 - **P3 scans are report-only** (`ENFORCE_SCANS: "false"`); only Gitleaks hard-fails. Do not claim Trivy/Checkov/Sonar as
   blocking gates unless we flip it in our copy.
 - LangGraph strict msgpack: keep state to pydantic models/primitives; set `LANGGRAPH_STRICT_MSGPACK=true` (MIA D-24).

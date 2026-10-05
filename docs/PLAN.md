@@ -52,8 +52,7 @@ with interrupt-bound decisions and compare-and-set; startup recovery (scan non-t
 idempotency and audit-before/after; officer identity and separation of duties (D-08); minimal server-rendered officer UI
 (case queue, case page with facts, hits with reasons, fired rules, recommendation, approve/reject/more-info, strict CSP, no
 inline script, text-only rendering like P3's `/ui`); Langfuse: trace per case, span per node, tool and generation spans,
-prompts fetched by label with cache and local fallback; eval harness (`evals/run.py`), metrics, LLM-judge, first committed
-result in `evals/results/`.
+prompts fetched by label with cache and local fallback. (The eval harness moved to Phase 3b, D-15.)
 **Done when:**
 - kill-and-resume test: start a case, stop the process at the interrupt, start a new process, resume, case reaches
   `executing`/`approved` without re-running earlier nodes (asserted via audit rows and call counters);
@@ -61,17 +60,21 @@ result in `evals/results/`.
 - UI e2e (httpx + HTML assertions) passes; CSP header test passes; no `innerHTML` and similar in static JS (P3's test pattern);
 - a Langfuse trace for one case shows node spans, a generation with prompt name+version, and the same version appears in the
   corresponding audit row;
-- `python -m evals.run --deterministic` exits 0 and writes `evals/results/<date>.json`; `--live` has run at least once or the
-  result file states `llm_mode: template` and the reason (quota).
-Gate before this phase's live eval: confirm Bedrock quota for Haiku 4.5 is non-zero in the account (P3 is blocked on it).
+
+## Phase 3b: evals (deferred until P3's KYC service is live, D-15)
+Starts only when `POST /documents` on P3's KYC service succeeds in the cluster (Bedrock quota raised). Deliverables:
+specimen-document generator carrying our synthetic names, the 12 cases in `docs/EVALS.md` run end to end against live KYC,
+harness, metrics, LLM-judge, Langfuse dataset and run, first committed `evals/results/<date>.json`, CI eval gate.
+**Done when:** `evals.run --live` writes a result file with `mode: live` and live KYC recorded; the deterministic part of the gate
+exits 0 in CI; Langfuse run name and trace ids in the file resolve. Until then, the README makes no eval claims.
 
 ## Phase 4: images, manifests, pipeline, cluster
-Deliverables: one image, two Deployments (`onboarding-api`, `onboarding-mock-bank`) via different commands (satisfies P3's
-single-image-per-commit contract); Postgres StatefulSet per env; `k8s/{qa,prod}` kustomize (SecretStore, ExternalSecret,
+Deliverables: one image, two Deployments (`onboarding-api`, `onboarding-mock-bank`) via different commands (D-11, pending); Postgres StatefulSet per env; `k8s/{qa,prod}` kustomize (SecretStore, ExternalSecret,
 Ingress in the shared ALB group, probes, non-root, read-only root fs, resource requests sized to the namespace quota);
-`infra/terraform` overlay (own ECR repo, deploy roles trusting this repo, IRSA role for Bedrock, secrets shells, ESO policy for
-the new secrets, quota bump if needed); workflows copied from P3 and adapted (names, image, hosts, PROD_HOST, vars), plus an
-eval-gate job (deterministic); DNS alias and ACM SAN steps documented.
+`infra/terraform` own stack (ECR repo, namespaces `onboarding-qa/prod` with quota, deploy roles trusting this repo, IRSA role
+for Bedrock, secret shells, ESO roles, own ACM cert, Route 53 aliases for `qa-proj4-onboarding` / `proj4-onboarding`; reads P3 via data
+sources only; own state; `terraform destroy` leaves P3 intact); workflows copied from P3 and adapted (names, image, hosts, PROD_HOST, vars), plus an
+eval-gate job (deterministic); free CPU/memory on the nodes measured first.
 **Done when:** a push to `qa` runs Gitleaks, Checkov, Trivy, lint, tests, Sonar, build, Trivy image, SBOM, ECR push, deploy and
 `kubectl rollout status`; `/healthz` is green in `qa`; a smoke script submits a synthetic case in qa, and the case reaches
 `awaiting_officer`; extraction state is reported honestly (`extraction_unavailable` while P3's Bedrock quota is zero); PR
@@ -81,7 +84,7 @@ eval-gate job (deterministic); DNS alias and ACM SAN steps documented.
 Deliverables: README (architecture, run it, numbers from `evals/results/` only, links to controls and decisions); CONTROLS
 table filled with real evidence links and screenshots; `MODEL_INVENTORY.md` complete; Langfuse screenshots; 2-minute demo
 clip script (below) and the recording.
-**Done when:** every number in README is traceable to a file in `evals/results/` (a small script greps README numbers and checks
+**Done when (needs Phase 3b):** every number in README is traceable to a file in `evals/results/` (a small script greps README numbers and checks
 them against the latest result); every CONTROLS evidence link resolves; the four resume claims are checked off below.
 
 ### 2-minute demo script
@@ -109,6 +112,6 @@ tamper a row in a scratch DB and show it fail. 1:50 Langfuse trace + eval result
 
 ## Risks
 - Bedrock quota (affects LLM-live evals and P3's KYC in the cluster). Mitigation: template fallback, recorded KYC fixtures.
-- Shared namespace quota and 2-node cluster capacity (see D-10). Mitigation: measure before Phase 4.
+- Capacity on P3's 2-node cluster, and our stack's dependency on P3's cluster existing (D-10). Mitigation: measure before Phase 4.
 - Pipeline copy drifts from P3 (D-04). Mitigation: a header comment records the P3 commit copied.
 - CBUAE text not machine-readable from here (403): see CONTROLS.md.
