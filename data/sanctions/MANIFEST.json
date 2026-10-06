@@ -1,0 +1,15 @@
+{
+  "date_generated": "2026-10-03T23:00:03.428Z",
+  "entities_indexed": 0,
+  "index_file": "un_index.jsonl",
+  "index_sha256": "ca08d8c07e2c5be76db6e00811a83752ed75d8051fb52ecb72df11675585de44",
+  "individuals_indexed": 736,
+  "notes": "Individuals only; entities are not indexed. The list's terms of use were not reviewed when the snapshot was taken: confirm them before redistributing.",
+  "raw_file": "un_consolidated.xml",
+  "raw_sha256": "a749134d9922094123b40e3d9479965a867fc95dbe336d96c587dd0e967ba9c7",
+  "retrieved_on": "2026-10-06",
+  "snapshot_date": "2026-10-03",
+  "source": "UN",
+  "source_name": "UN Security Council Consolidated List",
+  "source_url": "https://scsanctions.un.org/resources/xml/en/consolidated.xml"
+}

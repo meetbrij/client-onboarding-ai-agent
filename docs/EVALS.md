@@ -48,7 +48,7 @@ field, possible hit, extraction unavailable or rating medium/high gives `manual_
 | 5 | low_confidence_extraction | low-confidence fields | medium | manual_review | none | approve | approved |
 | 6 | high_risk_jurisdiction | residence in listed jurisdiction | high | manual_review | none | approve with EDD note | approved |
 | 7 | high_risk_occupation | listed occupation | medium | manual_review | none | approve | approved |
-| 8 | multiple_issues | missing doc + high-risk jurisdiction + low confidence | high | request_info | none | reject | rejected |
+| 8 | multiple_issues | missing doc + increased-monitoring jurisdiction + low confidence | high | request_info | none | reject | rejected |
 | 9 | kyc_unavailable | KYC down: degrade | high | manual_review | none (screen runs on declared details) | request_more_info; stop | awaiting_documents |
 | 10 | llm_unavailable | LLM down: template fallback | low | approve | none | approve | approved |
 | 11 | alias_hit | applicant alias matches list alias | high | reject | 1 strong | confirm, reject | rejected |
@@ -58,7 +58,7 @@ Trajectories are written per case from the audit log's node events. Examples: ca
 approve, execute`; case 2 `intake, extract, screen, assess, approve` (ends); case 4 `intake, extract, screen, assess, approve,
 await_docs, intake, extract, screen, assess, approve, execute`; case 9 `intake, extract, screen, assess, approve, await_docs`.
 Cases 4 and 9 also cover the request-more-info loop. KYC-down is also asserted to produce `degraded: [extraction_unavailable]`.
-Row 8's recommendation follows the precedence rule above (missing docs outrank manual review).
+Row 8's recommendation follows the precedence rule above (missing docs outrank manual review). For multi-pass cases (4, 9) the `expected` recommendation, rating, hits and rules describe the **first** approval pass. Case 8 has no occupation rule: its high rating comes from three medium rules (R-DOC-01, R-DOC-02, R-JUR-02), which needs the escalation rule in DECISIONS D-19. The fixtures are in `evals/cases/` and are checked against the vendored sanctions snapshot by `tests/test_fixtures.py`.
 
 ## Metrics
 | Metric | Definition | Needs LLM? | CI gate |

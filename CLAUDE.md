@@ -1,7 +1,7 @@
 # CLAUDE.md
 
-Guidance for Claude Code in this repository. Status: **Phase 1 planning. No application code exists yet.**
-Do not write application code until the user has reviewed `docs/DECISIONS.md` and said go.
+Guidance for Claude Code in this repository. Status: **Phase 1 done (scaffolding, sanctions loader, 12 fixtures, mock bank, compose). The graph, rules, audit log and API are not written yet (Phase 2).**
+Build phase by phase as in `docs/PLAN.md`; decisions in `docs/DECISIONS.md` are accepted unless marked otherwise.
 
 ## Purpose
 An agentic client-onboarding workflow for a bank-style application. A compliance officer stays in the loop and every step
@@ -46,10 +46,11 @@ Dockerfile  docker-compose.yml  pyproject.toml  tests/  (incl. API-to-mock-bank 
 
 ## Commands (targets; they must exist by the end of the phase noted in PLAN.md)
 ```bash
-make setup                                   # uv sync; pre-commit; create .env from .env.example
-docker compose up -d --build                 # api :8000, mock-bank :8001, postgres, fake-kyc :8002 (no AWS needed)
+make setup                                   # uv sync; create .env from .env.example
+docker compose up -d --build                 # works now: postgres, mock-bank :8001, fake-kyc :8002 (api joins in Phase 2)
 uv run python scripts/load_sanctions.py      # rebuild index from data/sanctions snapshot (never run in prod)
-uv run pytest                                # offline: fake LLM, fake KYC, SQLite/ephemeral Postgres
+uv run pytest                                # offline; set MOCK_BANK_TEST_DATABASE_URL (compose postgres) to include the Postgres race test
+uv run python scripts/make_fixtures.py       # regenerate evals/cases/*.yaml (committed; tests check them against the snapshot)
 uv run ruff check . && uv run mypy app tests
 # evals are deferred until P3's KYC service is live (D-15, Phase 3b):
 uv run python -m evals.run --live            # live KYC + Bedrock + Langfuse; writes evals/results/<date>.json

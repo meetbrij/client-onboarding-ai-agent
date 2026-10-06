@@ -283,7 +283,7 @@ Dockerfile  docker-compose.yml  pyproject.toml  tests/
 
 ## Local Development
 
-*Targets for the end of Phase 2; these commands do not work yet.*
+*Works now: `setup`, `docker compose up` (Postgres, mock bank, fake KYC), `pytest`, lint, the sanctions loader and the fixture generator. Not yet: the onboarding API, the audit command and the evals (Phases 2 to 3b).*
 
 ```bash
 make setup                                   # uv sync, pre-commit, copy .env.example to .env
@@ -328,8 +328,8 @@ Settings are environment variables (documented in `.env.example` when the code l
 
 | Phase | Scope | Status |
 |---|---|---|
-| 0 | README and architecture diagrams | this document |
-| 1 | Repo scaffolding, sanctions loader, fixtures, mock core-banking | not started |
+| 0 | README and architecture diagrams | done |
+| 1 | Repo scaffolding, sanctions loader, fixtures, mock core-banking | done (2026-10-06); CI not yet run on GitHub |
 | 2 | Graph to assess, rules, hash-chained audit log | not started |
 | 3 | Approval interrupt, checkpointer and resume, execute, officer UI, Langfuse | not started |
 | 3b | Evals against the live KYC service | waiting on Bedrock quota |

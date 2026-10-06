@@ -35,10 +35,18 @@ manifest (source URL, date, sha256, entry count); `data/reference/` jurisdiction
 dates; the 12 synthetic case fixtures (`evals/cases/*.yaml`, each `SPECIMEN`) incl. recorded KYC responses; mock core-banking
 service (idempotent create-customer, UNIQUE idempotency key) with tests; `docker-compose.yml`; `pyproject.toml`, ruff, mypy,
 pytest skeleton; CI lint+test only.
+**Status: built 2026-10-06; checks below were run and passed (see the end of this phase's section).**
 **Done when:** `docker compose up` starts postgres + mock-bank + fake-kyc; `pytest` passes the mock-bank idempotency tests
 (same key twice returns the same `customer_id`; same key with a different payload returns 409);
 `load_sanctions.py` rebuilds the index and a unit test finds a known entry by exact name; every fixture file contains
 `SPECIMEN`; `gitleaks` is clean; user has approved `DECISIONS.md`.
+
+**Phase 1 results (2026-10-06):** compose starts postgres, mock-bank and fake-kyc, all healthy; replaying a `POST /customers`
+with the same key returned 200, `Idempotent-Replayed: true` and the same `customer_id`; 34 tests pass (including a 16-thread
+same-key race on real Postgres, which is skipped unless `MOCK_BANK_TEST_DATABASE_URL` is set); ruff, ruff format and mypy are clean; Gitleaks found
+no leaks in the working tree or the four commits at that time; the sanctions index rebuilds deterministically (736 UN individuals, snapshot
+date 2026-10-03) and is verified against its manifest hash. Not done: CI has not run on GitHub yet (workflow written, never pushed),
+and the Docker image was built locally only.
 
 ## Phase 2: graph to assess, rules, audit chain
 Deliverables: `CaseState`; nodes `intake`, `extract` (KYC tool with timeout, retry, and degrade path), `screen` (normalise,

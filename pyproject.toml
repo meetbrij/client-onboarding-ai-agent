@@ -1,0 +1,53 @@
+[project]
+name = "client-onboarding-ai-agent"
+version = "0.1.0"
+description = "Agentic client onboarding workflow with a human approval gate and a hash-chained audit log. Synthetic data only."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.8",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+    "httpx>=0.27",
+    "python-multipart>=0.0.9",
+    "pyyaml>=6.0",
+    "rapidfuzz>=3.9",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app/onboarding", "app/mock_bank", "app/fake_kyc"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["app", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106"]
+"scripts/make_fixtures.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = true

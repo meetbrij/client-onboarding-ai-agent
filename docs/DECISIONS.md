@@ -253,3 +253,14 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   fixtures in screenshots without the SPECIMEN banner. If this feels wrong, switch to name-only variants and drop DOB/nationality
   corroboration from the true-hit case (the DOB-mismatch case still covers corroboration).
 - **Status:** Accepted (user, 2026-10-05).
+
+### D-19 · Rating aggregation, and which country the jurisdiction rule reads
+- **Context:** writing the fixtures exposed two gaps in the rule design. Case 8 (missing document, low-confidence field,
+  residence in an increased-monitoring country) must rate **high**, but each of those rules is medium severity, so "max severity"
+  alone would give medium.
+- **Recommendation:** rating = highest severity among fired rules, **raised one level when three or more distinct rules fire**
+  (capped at high). Severities: R-SAN-01 strong hit high; R-SAN-02 possible hit medium; R-JUR-01 FATF call-for-action high; R-JUR-02
+  increased monitoring medium; R-OCC-01 higher-risk occupation medium; R-DOC-01 missing document medium; R-DOC-02 low-confidence or
+  malformed field medium; R-DOC-03 extraction unavailable high. The jurisdiction rules read `residence_country` and the ID document's
+  `issuing_country`, not nationality alone, so a DRC national resident in the UAE does not fire R-JUR-02 (cases 2 and 11 rely on this).
+- **Status:** Proposed; waiting for the user. The fixtures already assume it.

@@ -1,0 +1,53 @@
+# Local development stack (Phase 1): Postgres, the mock core-banking service and a fake KYC service.
+# The onboarding API joins in Phase 2. All data is synthetic; the passwords below are local-only.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres-local
+      POSTGRES_DB: postgres
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mock-bank:
+    build: .
+    command: ["sh", "-c", "exec uvicorn mock_bank.main:get_app --factory --host 0.0.0.0 --port 8001"]
+    environment:
+      MOCK_BANK_DATABASE_URL: postgresql+psycopg://mockbank:mockbank-local@postgres:5432/mockbank
+    ports:
+      - "127.0.0.1:8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=3)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  fake-kyc:
+    build: .
+    command: ["sh", "-c", "exec uvicorn fake_kyc.main:get_app --factory --host 0.0.0.0 --port 8002"]
+    environment:
+      FAKE_KYC_CASES_DIR: /cases
+    volumes:
+      - ./evals/cases:/cases:ro
+    ports:
+      - "127.0.0.1:8002:8002"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/healthz', timeout=3)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:

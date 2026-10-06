@@ -1,0 +1,40 @@
+# High-risk jurisdiction reference data for rule R-JUR (Phase 2). The rule applies to the applicant's
+# residence_country (and the issuing country of the ID document), not to nationality alone.
+#
+# SOURCE STATUS (read before relying on this):
+# - call_for_action: three jurisdictions. Confirmed from two independent pages quoting the FATF
+#   statement of 19 June 2026 (MAS publication of the statement; a secondary summary). The FATF
+#   website itself returned HTTP 403 when fetched, so FATF's own page was NOT read.
+# - increased_monitoring: taken from ONE secondary summary only (citadel365.com, "FATF June 2026
+#   Update"); not cross-checked against FATF. Verify against fatf-gafi.org before any real use.
+# - The FATF plenary of October 2026 may have changed both lists after this file was written.
+# - Names are as written in the sources; the matcher compares normalised, case-folded strings.
+as_of: "2026-06-19"
+retrieved_on: "2026-10-06"
+call_for_action:        # severity: high
+  - Democratic People's Republic of Korea
+  - Iran
+  - Myanmar
+increased_monitoring:   # severity: medium
+  - Angola
+  - Bolivia
+  - Bosnia and Herzegovina
+  - Bulgaria
+  - Cameroon
+  - Côte d'Ivoire
+  - Democratic Republic of the Congo
+  - Haiti
+  - Iraq
+  - Kenya
+  - Kuwait
+  - Laos
+  - Lebanon
+  - Monaco
+  - Nepal
+  - Papua New Guinea
+  - South Sudan
+  - Syria
+  - Venezuela
+  - Vietnam
+  - Virgin Islands (UK)
+  - Yemen

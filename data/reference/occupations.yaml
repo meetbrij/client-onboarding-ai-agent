@@ -1,0 +1,21 @@
+# Occupation categories that raise risk, for rule R-OCC (Phase 2).
+#
+# SOURCE STATUS: ILLUSTRATIVE INTERNAL POLICY, not a regulatory list. The categories reflect
+# sectors commonly treated as higher risk in AML practice (cash-intensive or high-value
+# trading, money transfer, virtual assets, arms, politically exposed roles), but the exact set
+# and the matching keywords are this project's own choice. A bank would take them from its
+# risk-appetite statement. Matching is by normalised substring on the declared occupation.
+as_of: "2026-10-06"
+high_risk:              # severity: medium
+  - category: precious_metals_and_stones_dealer
+    keywords: ["precious metals", "precious stones", "gold dealer", "jewellery trader", "diamond dealer"]
+  - category: money_service_business
+    keywords: ["money exchange", "money transfer", "remittance", "hawala"]
+  - category: virtual_assets
+    keywords: ["crypto", "virtual asset", "digital asset trader"]
+  - category: arms_and_defence
+    keywords: ["arms dealer", "weapons", "defence contractor"]
+  - category: cash_intensive_trading
+    keywords: ["cash-intensive", "casino", "gaming operator"]
+  - category: politically_exposed
+    keywords: ["minister", "member of parliament", "senior government official", "judge", "ambassador"]
