@@ -13,6 +13,8 @@ dependencies = [
     "python-multipart>=0.0.9",
     "pyyaml>=6.0",
     "rapidfuzz>=3.9",
+    "langgraph>=0.6",
+    "boto3>=1.35",
 ]
 
 [dependency-groups]
@@ -41,13 +43,17 @@ src = ["app", "tests", "scripts"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "S"]
-ignore = ["S101"]
+ignore = ["S101", "E501"]  # long strings and SQL are left to ruff format
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S105", "S106"]
-"scripts/make_fixtures.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true
 check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# Tests poke at Optional state fields and build models from plain strings; the application code stays strict on these.
+module = "tests.*"
+disable_error_code = ["union-attr", "arg-type", "func-returns-value", "var-annotated"]

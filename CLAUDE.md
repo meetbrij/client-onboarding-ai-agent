@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude Code in this repository. Status: **Phase 1 done (scaffolding, sanctions loader, 12 fixtures, mock bank, compose). The graph, rules, audit log and API are not written yet (Phase 2).**
+Guidance for Claude Code in this repository. Status: **Phases 1 and 2 done: sanctions scorer, risk rules, audit chain, intake to assess graph with the approval pause, LLM layer (fakes + Bedrock client), offline CLI. Not yet: resume and execute, API, UI, Langfuse, Postgres checkpointer (Phase 3); evals (3b); deploy (4).**
 Build phase by phase as in `docs/PLAN.md`; decisions in `docs/DECISIONS.md` are accepted unless marked otherwise.
 
 ## Purpose
@@ -54,8 +54,10 @@ uv run python scripts/make_fixtures.py       # regenerate evals/cases/*.yaml (co
 uv run ruff check . && uv run mypy app tests
 # evals are deferred until P3's KYC service is live (D-15, Phase 3b):
 uv run python -m evals.run --live            # live KYC + Bedrock + Langfuse; writes evals/results/<date>.json
-uv run python -m onboarding.audit verify     # verify_audit_chain: exits non-zero and prints first broken row
-uv run python -m onboarding.graph.build --case evals/cases/clean_approve.yaml --decision approve   # one case, scripted human
+uv run python -m onboarding.audit verify     # verify_audit_chain against $DATABASE_URL: exit 1 and the first broken row on a break
+uv run python -m onboarding.graph.build --all   # offline: all 12 fixtures to the approval pause, compared with their expectations
+uv run python -m onboarding.graph.build --case evals/cases/clean_approve.yaml   # one case (scripted human steps arrive in Phase 3)
+# Postgres-backed tests: export TEST_POSTGRES_ADMIN_URL=postgresql+psycopg://postgres:postgres-local@localhost:5432/postgres
 # deploy: push to qa => QA pipeline; PR qa -> main => prod pipeline, approval-gated retag (see PLAN Phase 4)
 ```
 
@@ -65,13 +67,15 @@ case_id: str                      # = LangGraph thread_id
 status: intake|extracting|screening|assessing|awaiting_officer|awaiting_documents|executing|approved|rejected|failed
 applicant: {name, aliases[], dob, nationality, residence_country, occupation}    # synthetic
 documents: [{doc_ref, doc_type, sha256, kyc_document_id|None}]                   # never bytes
-extraction: {available: bool, fields: [{name, value, confidence, needs_review, reason}], doc_flags[]}
+extraction: {attempted, available (every provided doc extracted), fields: [{document, name, value, confidence, needs_review, reason}],
+             failed_documents[], doc_flags[]}
 missing_documents: [doc_type]
 screening: {list_source, snapshot_date, algorithm, threshold, hits: [{entry_id, matched_name, score,
-            field_agreement: {name, dob, nationality: agree|disagree|unknown}, reason, llm_note|None,
+            classification: strong|possible, field_agreement: {dob, nationality: agree|partial|disagree|unknown}, reason, llm_note|None,
             disposition: None|cleared|confirmed, disposition_by}]}
 risk: {rating: low|medium|high, fired_rules: [{rule_id, severity, inputs, explanation}]}
 recommendation: {action: approve|reject|request_info|manual_review, explanation, drafted_by: llm|template}
+summary: str|None                 # officer summary (LLM or template)
 missing_doc_draft: str|None       # never sent automatically
 decision: {action: approve|reject|request_more_info, officer, note, at}|None
 execution: {customer_id, idempotency_key}|None
@@ -132,4 +136,8 @@ Until Phase 4 the only workflow is `ci.yml` (Gitleaks, lint, types, tests), whic
 - **P3 scans are report-only** (`ENFORCE_SCANS: "false"`); only Gitleaks hard-fails. Do not claim Trivy/Checkov/Sonar as
   blocking gates unless we flip it in our copy.
 - LangGraph strict msgpack: keep state to pydantic models/primitives; set `LANGGRAPH_STRICT_MSGPACK=true` (MIA D-24).
+- **The audit log refuses personal-data keys** (`dob`, `id_number`, `value`, `address`...) and long strings: name payload keys accordingly
+  (`dob_agreement`, not `dob`). Rule `inputs` appear in audit rows, so keep them to identifiers, countries and counts.
+- **Paths:** use `onboarding.paths` (env `ONBOARDING_DATA_DIR`, `ONBOARDING_PROMPTS_DIR`) never `Path(__file__)` tricks: the image installs
+  the package into a venv.
 - Hash chain concurrency: appends take `pg_advisory_xact_lock`; never insert audit rows from two connections without it.

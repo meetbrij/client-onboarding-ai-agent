@@ -18,6 +18,8 @@ RUN groupadd --system --gid 10001 app \
 COPY --from=build /opt/venv /opt/venv
 WORKDIR /srv
 COPY data ./data
+COPY prompts ./prompts
+ENV ONBOARDING_DATA_DIR=/srv/data ONBOARDING_PROMPTS_DIR=/srv/prompts
 USER 10001
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
