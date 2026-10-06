@@ -245,6 +245,34 @@ flowchart TD
 
 Principles carried over from P3: build once and promote the artifact (retag, never rebuild); immutable SHA-tagged images, never `latest`; separate QA and prod roles that cannot assume each other; approval before prod. Branches: `feature/*` to `qa` to `main`. A deterministic eval gate joins the pipeline once the evals exist (Phase 3b).
 
+## Branching strategy
+
+Same model as P3: `main` (production), `qa` (cut from `main`, auto-deployed to QA), and short-lived `feature/*` branches cut from `qa`.
+
+```mermaid
+gitGraph
+    commit id: "phase 1" tag: "v0.1.0"
+    branch qa
+    checkout qa
+    branch feature/onb-002-graph
+    checkout feature/onb-002-graph
+    commit id: "feature work"
+    checkout qa
+    merge feature/onb-002-graph id: "PR into qa: QA pipeline runs"
+    checkout main
+    merge qa id: "PR into main: prod pipeline runs" tag: "v0.2.0"
+```
+
+| Branch | Cut from | Merged into | Triggers after a successful merge |
+|---|---|---|---|
+| `feature/*`, `bugfix/*` | `qa` | `qa` (PR) | QA pipeline: scans, build, ECR push, deploy to `onboarding-qa` |
+| `qa` | `main` | `main` (PR) | Prod pipeline: wait for approval, retag the QA image, deploy to `onboarding-prod` |
+| `hotfix/*` | `main` | `main` and `qa` | Prod pipeline, then back-sync to `qa` |
+
+Names are `<type>/<ticket-id>-<short-slug>` in lowercase. Nothing is pushed directly to `main` or `qa`. Until Phase 4 the only workflow is the CI
+job (secret scan, lint, types, tests); the QA and prod pipelines are added then. On GitHub, `qa` must not require PRs or status checks (the QA
+pipeline commits the deployed image tag back to it, as in P3); block force-push and deletion there. `main` requires a PR (0 approvals while solo) and blocks force-push and deletion.
+
 ## Environments and access
 
 `qa` and `prod` are two namespaces on one cluster, to keep cost down: `onboarding-qa` and `onboarding-prod`, with separate quotas, secrets, IAM roles and EKS access entries. The QA deploy role has no access to prod. The cluster is shared with P3, so the control plane and nodes are too; namespace RBAC and IAM scoping are the isolation boundary, as in P3. Destroying this project's Terraform stack removes our namespaces, roles, secrets, ECR repository and DNS records and leaves P3 running. The reverse is not true: if P3's platform stack is destroyed, our cluster goes with it.
