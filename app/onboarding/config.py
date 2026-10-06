@@ -31,6 +31,7 @@ class Settings:
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     max_info_rounds: int = 2
+    llm_retry_attempts: int = 5  # Bedrock attempts per call before falling back to templates
     tokens_json: str = ""  # [{"id": "...", "role": "officer|submitter", "sha256": "<hex of the token>"}]
     session_secret: str = ""
     doc_max_bytes: int = 10 * 1024 * 1024
@@ -61,6 +62,7 @@ class Settings:
             langfuse_public_key=e.get("LANGFUSE_PUBLIC_KEY", ""),
             langfuse_secret_key=e.get("LANGFUSE_SECRET_KEY", ""),
             max_info_rounds=int(e.get("MAX_INFO_ROUNDS", "2")),
+            llm_retry_attempts=int(e.get("LLM_RETRY_ATTEMPTS", "5")),
             tokens_json=e.get("ONBOARDING_TOKENS", ""),
             session_secret=e.get("SESSION_SECRET", ""),
             doc_max_bytes=int(e.get("DOC_MAX_BYTES", str(10 * 1024 * 1024))),
@@ -87,5 +89,7 @@ class Settings:
             ]
             if missing:
                 raise ConfigError(f"{', '.join(missing)} must be set in {self.environment}")
+        if self.llm_retry_attempts < 1:
+            raise ConfigError("LLM_RETRY_ATTEMPTS must be at least 1")
         if self.prompt_label not in {"production", "staging"}:
             raise ConfigError("PROMPT_LABEL must be production or staging")

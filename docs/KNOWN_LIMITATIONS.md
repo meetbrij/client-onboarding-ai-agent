@@ -37,3 +37,19 @@ Accepted gaps, kept honest. Add an entry whenever a decision knowingly leaves so
 - **The UI was exercised in one browser** (and by HTTP-level tests), not across browsers or with assistive technology.
 - **Extracted values live in the checkpoint until the retention purge** (default 30 days after the case closes); they are never in logs, audit rows, traces or prompts.
 - **No metrics endpoint yet** (P3's Prometheus pattern); logs are JSON on stdout and traces go to Langfuse.
+- **Phase 4 is not deployed.** Nothing has run on the cluster: the Terraform plans, the External Secrets sync, the IRSA and OIDC trust, the ALB and the DNS are
+  unverified until the steps in `infra/terraform/README.md` are done. Local checks cover syntax, rendered manifests, the Postgres pod's security settings and the
+  workflows' syntax only.
+- **Scans only report (as in P3, `ENFORCE_SCANS: "false"`).** Local runs of the same tools: Trivy on the image found 44 HIGH and 0 CRITICAL, all Debian base-image
+  packages (`python:3.12-slim`), most without a fixed version, none in Python dependencies; with enforcement on, that run would fail. Checkov on `k8s/`: 18 findings,
+  of which `CKV_K8S_21` (default namespace) is an artefact of rendering the base without its overlay, `CKV_K8S_43` (image digest) conflicts with SHA-tag promotion as
+  in P3, `CKV_K8S_35` (secrets as environment variables) is the External Secrets pattern as in P3, `CKV_K8S_14` is the `onboarding` placeholder the pipeline rewrites,
+  `CKV_K8S_40` is Postgres running as its own uid 999 (the image needs it), and `CKV_K8S_15` asks for `imagePullPolicy: Always` on the Postgres image. Checkov on
+  Terraform: 7 findings, all KMS customer keys and automatic rotation for Secrets Manager and ECR, which were left out to keep the stack thin. None is suppressed yet.
+- **The Postgres image comes from Docker Hub** (`postgres:16.6`), is not built or scanned by our pipeline, and is subject to Docker Hub rate limits on a fresh node.
+- **NetworkPolicies may not be enforced:** the manifests include them, but whether the cluster's CNI enforces them was not checked.
+- **Coupled to P3's names:** the KYC service is reached at `nodejs-service.<qa|prod>.svc.cluster.local`, its Service name in P3's manifests. If P3 renames it, set `KYC_BASE_URL`.
+- **One API replica and one Postgres pod per environment, no backups.** A restore story (snapshots of the EBS volume) is out of scope here; prod uses a Retain
+  volume so data survives a deleted claim.
+- **The first QA run will exercise untested paths:** ESO to Secrets Manager, IRSA for Bedrock (quota is zero, so the LLM falls back to templates after `LLM_RETRY_ATTEMPTS`),
+  cross-namespace KYC calls (the real service will not read the smoke test's text files, so extraction is reported unavailable).

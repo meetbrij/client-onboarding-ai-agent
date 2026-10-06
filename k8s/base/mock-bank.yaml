@@ -1,0 +1,91 @@
+# The mock core-banking service: the same image as the API, a different command. It stands in for an
+# external system and is reachable only from the API pods (see networkpolicy.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: onboarding-mock-bank
+  labels:
+    app: onboarding-mock-bank
+spec:
+  type: ClusterIP
+  selector:
+    app: onboarding-mock-bank
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: onboarding-mock-bank
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: onboarding-mock-bank
+  template:
+    metadata:
+      labels:
+        app: onboarding-mock-bank
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mock-bank
+          # Rewritten by kustomization.yaml (images:); the pipeline sets the registry and the git SHA tag.
+          image: onboarding
+          imagePullPolicy: Always
+          command: ["sh", "-c", "exec uvicorn mock_bank.main:get_app --factory --host 0.0.0.0 --port 8001"]
+          ports:
+            - name: http
+              containerPort: 8001
+          env:
+            - name: HOME
+              value: /tmp
+            - name: MOCKBANK_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pg-secret
+                  key: MOCKBANK_PASSWORD
+            - name: MOCK_BANK_DATABASE_URL
+              value: postgresql+psycopg://mockbank:$(MOCKBANK_PASSWORD)@postgres:5432/mockbank
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude Code in this repository. Status: **Phases 1 to 3 done: the full workflow (intake to execute, with the officer pause, the document loop, crash-safe resume), Postgres checkpointer and hash-chained audit log, API, officer UI, Langfuse tracing and prompt management. Not yet: evals (3b, waiting for P3's KYC service), deploy (4).** Langfuse Cloud and Bedrock have not been called for real (no keys, zero quota): they are tested with the real SDK against an in-memory exporter, and with stubs.
+Guidance for Claude Code in this repository. Status: **Phases 1 to 3 done; Phase 4 written and validated locally but not applied (Terraform, secrets and the first pipeline run are the user's to do: see `infra/terraform/README.md` and PLAN): the full workflow (intake to execute, with the officer pause, the document loop, crash-safe resume), Postgres checkpointer and hash-chained audit log, API, officer UI, Langfuse tracing and prompt management. Not yet: evals (3b, waiting for P3's KYC service), deploy (4).** Langfuse Cloud and Bedrock have not been called for real (no keys, zero quota): they are tested with the real SDK against an in-memory exporter, and with stubs.
 Build phase by phase as in `docs/PLAN.md`; decisions in `docs/DECISIONS.md` are accepted unless marked otherwise.
 
 ## Purpose
@@ -63,6 +63,8 @@ uv run python -m onboarding.db migrate       # needs OWNER_DATABASE_URL and APP_
 uv run python scripts/sync_prompts.py --label staging   # push prompts/ to Langfuse (needs LANGFUSE_* keys)
 # Postgres-backed tests (checkpointer, roles, restart/resume, races): docker compose up -d postgres, then
 #   export TEST_POSTGRES_ADMIN_URL=postgresql+psycopg://postgres:postgres-local@localhost:5432/postgres
+kubectl kustomize k8s/qa                     # render the manifests (no cluster needed); `tests/test_manifests.py` checks them
+(cd infra/terraform/envs/qa && terraform init -backend=false && terraform validate)   # validate without credentials
 # deploy: push to qa => QA pipeline; PR qa -> main => prod pipeline, approval-gated retag (see PLAN Phase 4)
 ```
 
@@ -150,6 +152,11 @@ Until Phase 4 the only workflow is `ci.yml` (Gitleaks, lint, types, tests), whic
 - **FastAPI annotations:** `api/main.py` must not use `from __future__ import annotations` (it breaks `Depends` on local functions, giving a
   silent 422). Form uploads come back as Starlette's `UploadFile`, not FastAPI's subclass.
 - **Langfuse SDK keeps process-wide state:** tests share one client per module (several create/shutdown cycles hang).
+- **First deploy needs the secret values first** (`infra/terraform/README.md`): the pods read them through External Secrets and wait without them.
+  The API's init container runs `onboarding.db migrate` (owner role, advisory-locked, idempotent); the app itself only has the restricted role.
+- **Do not use `pg_advisory_lock` (blocking) or leave a transaction open in `migrate`**: both stall LangGraph's `CREATE INDEX CONCURRENTLY`.
+- **kustomize patches match env vars by name** (strategic merge), never by list index; the pipeline rewrites `newName`/`newTag` with `sed`, so those
+  two keys must stay unique in each overlay's `kustomization.yaml`.
 - LangGraph strict msgpack: keep state to pydantic models/primitives; set `LANGGRAPH_STRICT_MSGPACK=true` (MIA D-24).
 - **The audit log refuses personal-data keys** (`dob`, `id_number`, `value`, `address`...) and long strings: name payload keys accordingly
   (`dob_agreement`, not `dob`). Rule `inputs` appear in audit rows, so keep them to identifiers, countries and counts.

@@ -291,7 +291,7 @@ Twelve synthetic cases covering a clean approval, a true sanctions hit, a DOB-mi
 
 ## Repository Layout
 
-Planned; directories appear as the phases land.
+What is in the repository today.
 
 ```
 CLAUDE.md                   Rules and commands for Claude Code in this repo
@@ -303,9 +303,9 @@ data/reference/             High-risk jurisdictions and occupations, screening c
 prompts/                    Local fallback copies of the Langfuse prompts
 scripts/                    load_sanctions.py and helpers
 evals/                      cases/, run.py, metrics.py, judge.py, results/<date>.json
-k8s/{qa,prod}/              kustomize manifests (P3 pattern)
-infra/terraform/            This project's own AWS and cluster resources
-.github/workflows/          QA and prod pipelines, copied from P3 and adapted
+k8s/{base,qa,prod}/         Kustomize: shared manifests (Postgres, API, mock bank, network policies) and the two environment overlays
+infra/terraform/            This project's own AWS and cluster resources: platform/, envs/qa, envs/prod, modules/ (see its README for apply steps)
+.github/workflows/          qa-cicd.yml and prod-cd.yaml, copied from P3 and adapted
 Dockerfile  docker-compose.yml  pyproject.toml  tests/
 ```
 
@@ -364,7 +364,7 @@ Settings are environment variables (documented in `.env.example` when the code l
 | 2 | Graph to assess, rules, hash-chained audit log | done (2026-10-06), awaiting merge to `qa` |
 | 3 | Approval interrupt, checkpointer and resume, execute, officer UI, Langfuse | done (2026-10-06), awaiting merge to `qa` |
 | 3b | Evals against the live KYC service | waiting on Bedrock quota |
-| 4 | Image, manifests, own Terraform stack, pipeline, qa then prod | not started |
+| 4 | Image, manifests, own Terraform stack, pipeline, qa then prod | written and validated locally; not yet applied or run on the cluster |
 | 5 | Real eval numbers, controls evidence, demo clip | not started |
 
 ## License
