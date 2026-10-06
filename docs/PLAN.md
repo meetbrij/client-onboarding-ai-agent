@@ -49,6 +49,7 @@ date 2026-10-03) and is verified against its manifest hash. Not done: CI has not
 and the Docker image was built locally only.
 
 ## Phase 2: graph to assess, rules, audit chain
+**Status: built 2026-10-06 on `feature/onb-002-graph-rules-audit`; results at the end of this section.**
 Deliverables: `CaseState`; nodes `intake`, `extract` (KYC tool with timeout, retry, and degrade path), `screen` (normalise,
 rapidfuzz scorer, corroboration, reason records), `assess` (rule engine, one module per rule family, rating aggregation);
 LLM wrapper with fake implementation, retry/backoff, prompt name+version capture; audit log (table, trigger, role grants, hash
@@ -60,6 +61,18 @@ chain, `verify` CLI); CLI runner `graph.build` with in-memory checkpointer.
 - audit tests: `UPDATE` and `DELETE` and `TRUNCATE` raise; tampering a row (superuser edit in the test) makes `verify` fail at
   the right row; concurrent appends keep one linear chain;
 - a test proves no route function reads LLM output.
+
+**Phase 2 results (2026-10-06):** all 12 fixtures run offline to the approval pause with the trajectory `intake, extract, screen, assess, approve`
+and match their expected recommendation, rating, hits (entry and class), fired rules and degraded flags (`python -m onboarding.graph.build --all`:
+12/12, audit chains verified 12/12). 210 tests pass without a database; with the compose Postgres, 219 pass, including the audit trigger and
+role tests, tamper detection, a concurrent-append test (8 writers, 80 rows, one linear chain) and the verify CLI exit codes. Mutation checks:
+reading `state.summary` in a route fails `test_routes_ignore_llm`; disabling the hash comparison fails the tamper tests. Built in this phase:
+`CaseState` models; scorer, rules and rating (D-19); recommendation precedence (D-14); Postgres audit log with trigger, INSERT/SELECT-only role,
+advisory-lock chain and verify CLI; LLM client interface, fake and Bedrock implementations (backoff, no retry multiplication), prompt store,
+four roles with grounding checks and a circuit breaker; KYC HTTP tool with retry and degrade; document buffer; five nodes and the graph.
+Not done in this phase: Bedrock has not been called for real (quota; stub-tested only); Langfuse prompts and tracing (Phase 3); the
+Postgres checkpointer (the graph ran on LangGraph's in-memory one); resume, execute and the API (Phase 3); CI has not run these tests on
+GitHub yet.
 
 ## Phase 3: approval, resume, execute, UI, Langfuse, evals
 Deliverables: `approve` interrupt; Postgres checkpointer (`thread_id = case_id`, separate schema, strict msgpack); resume API

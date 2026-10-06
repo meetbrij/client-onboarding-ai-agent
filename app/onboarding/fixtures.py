@@ -13,6 +13,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from onboarding.models import Applicant
+
 DocType = Literal["id_document", "proof_of_address"]
 Recommendation = Literal["approve", "reject", "request_info", "manual_review"]
 Rating = Literal["low", "medium", "high"]
@@ -22,15 +24,6 @@ FinalStatus = Literal["approved", "rejected", "awaiting_documents"]
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-
-class Applicant(_Strict):
-    name: str
-    aliases: list[str] = Field(default_factory=list)
-    dob: str  # ISO date
-    nationality: str
-    residence_country: str
-    occupation: str
 
 
 class CaseDocument(_Strict):

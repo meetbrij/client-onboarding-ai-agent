@@ -261,8 +261,9 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
 - **Recommendation:** rating = highest severity among fired rules, **raised one level when three or more distinct rules fire**
   (capped at high). Severities: R-SAN-01 strong hit high; R-SAN-02 possible hit medium; R-JUR-01 FATF call-for-action high; R-JUR-02
   increased monitoring medium; R-OCC-01 higher-risk occupation medium; R-DOC-01 missing document medium; R-DOC-02 low-confidence or
-  malformed field medium; R-DOC-03 extraction unavailable high. The jurisdiction rules read `residence_country` and the ID document's
-  `issuing_country`, not nationality alone, so a DRC national resident in the UAE does not fire R-JUR-02 (cases 2 and 11 rely on this).
+  malformed field medium; R-DOC-03 extraction unavailable high. The jurisdiction rules read `residence_country` only. (Corrected in Phase 2: this entry first
+  also named the ID document's `issuing_country`, but that mirrors nationality, so a DRC national resident in the UAE would fire R-JUR-02,
+  which cases 2 and 11 must not.)
 - **Status:** Accepted (user, 2026-10-06). The fixtures already assume it.
 
 ### D-20 · Branching: `main`, `qa` (from main), `feature/*` (from qa), PR-only
@@ -271,3 +272,20 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
 - **Branch protection to configure on GitHub (not done by Claude):** `qa`: block force-push and deletion only (the QA pipeline pushes a
   bot commit with the deployed tag, as in P3); `main`: require a PR, 0 approvals, block force-push and deletion.
 - **Status:** Accepted.
+
+### D-21 · Phase 2 design choices (made while building; please review)
+- **Scorer:** keeps every listed entry whose best name or alias score reaches the raise threshold; classification and corroboration follow D-06.
+  Aliases of every quality ("Good" and "Low") are matched, and the name the KYC service read from the document is screened as well as the declared
+  name. Thresholds stay at 85 / 92: on the development set, 85 raised one false positive in 25 invented names and caught 8 of 10 variants
+  (the two misses omit a middle name); 90 gave the same recall with no false positive. Screening favours recall, so 85 was kept, and the numbers are
+  recorded in `data/reference/screening_config.yaml`. Revisit if officers see too many false positives.
+- **LLM calls happen before the approval pause:** annotation in `screen`, explanation, summary and draft in `assess`, so the interrupted node stays
+  free of side effects. A per-run circuit breaker stops calling the model after the first outage in a node.
+- **Outputs are checked, not trusted:** explanation and summary cannot name a rule that did not fire; a draft must ask for exactly the missing
+  documents and must not mention screening, risk, rules or a decision; failures fall back to templates and are audited as `llm_output_rejected`.
+- **Template wording lives with the LLM package** (`llm/facts.py`), so `rules/` and `screening/` contain nothing about LLM-produced fields; tests
+  enforce that they do not import `onboarding.llm`.
+- **The trajectory is read from the audit log:** `node_completed` rows in order, plus `approval_requested` (written by the runner, not the
+  interrupted node) as `approve`.
+- **Strict checkpoint deserialisation:** `LANGGRAPH_STRICT_MSGPACK=true` with an allowlist of exactly the classes in `onboarding.models`.
+- **Status:** Proposed; waiting for the user.
