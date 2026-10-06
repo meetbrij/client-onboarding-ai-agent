@@ -34,14 +34,14 @@ Every node writes an audit row. LLM calls are only the four listed in Hard rules
 CLAUDE.md  README.md  docs/{PLAN,CONTROLS,DECISIONS,EVALS,MODEL_INVENTORY}.md  docs/adr/
 app/onboarding/        graph/ (state, nodes, build), rules/ (risk rules), screening/, audit/, llm/, tools/ (kyc, bank),
                        api/, ui/ (templates + static)
-app/mock_bank/         separate small FastAPI service (same image, different command)
+app/mock_bank/         separate small FastAPI service (same image, different command; must not import onboarding/)
 data/sanctions/        dated snapshot + manifest (source, date, sha256); scripts/load_sanctions.py builds the index
 data/reference/        high-risk jurisdictions and occupations (dated, sourced)
 prompts/               local fallback copies of the Langfuse prompts
 evals/                 cases/*.yaml, run.py, metrics.py, judge.py, results/<date>.json
 k8s/{qa,prod}/         kustomize, P3 pattern     infra/terraform/   our own stack on P3's cluster (D-03, D-10)
 .github/workflows/     copied and adapted from P3
-Dockerfile  docker-compose.yml  pyproject.toml  tests/
+Dockerfile  docker-compose.yml  pyproject.toml  tests/  (incl. API-to-mock-bank contract test)
 ```
 
 ## Commands (targets; they must exist by the end of the phase noted in PLAN.md)

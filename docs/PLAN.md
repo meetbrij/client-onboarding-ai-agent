@@ -21,6 +21,13 @@ flowchart TD
 checkpoint). Approval guard (deterministic): an officer cannot approve while a screening hit has no disposition or while
 extraction was unavailable; they can reject or request more info.
 
+## Phase 0: README and architecture diagrams
+Deliverable: `README.md` with intro, nine steps, application, tech stack, mermaid diagrams (workflow, request flow and workloads,
+secrets, observability, audit chain, pipeline), environments, controls, evaluation status, layout, local development,
+prerequisites, known gaps, roadmap.
+**Done when:** the user has reviewed it, every mermaid block renders on GitHub, and it contains no metric or claim that is not
+marked planned.
+
 ## Phase 1: plan and scaffolding
 Deliverables: repo `client-onboarding-ai-agent` (name given by user, D-01); `CLAUDE.md`; `docs/` (this set + empty
 `MODEL_INVENTORY.md` skeleton and `adr/`); `scripts/load_sanctions.py` + dated UN snapshot in `data/sanctions/` with
@@ -49,7 +56,7 @@ chain, `verify` CLI); CLI runner `graph.build` with in-memory checkpointer.
 ## Phase 3: approval, resume, execute, UI, Langfuse, evals
 Deliverables: `approve` interrupt; Postgres checkpointer (`thread_id = case_id`, separate schema, strict msgpack); resume API
 with interrupt-bound decisions and compare-and-set; startup recovery (scan non-terminal cases, re-invoke); `execute` with
-idempotency and audit-before/after; officer identity and separation of duties (D-08); minimal server-rendered officer UI
+idempotency and audit-before/after; checkpoint retention purge for terminal cases (D-13); mock bank uses its own database and role on the same Postgres instance; officer identity and separation of duties (D-08); minimal server-rendered officer UI
 (case queue, case page with facts, hits with reasons, fired rules, recommendation, approve/reject/more-info, strict CSP, no
 inline script, text-only rendering like P3's `/ui`); Langfuse: trace per case, span per node, tool and generation spans,
 prompts fetched by label with cache and local fallback. (The eval harness moved to Phase 3b, D-15.)
@@ -69,7 +76,7 @@ harness, metrics, LLM-judge, Langfuse dataset and run, first committed `evals/re
 exits 0 in CI; Langfuse run name and trace ids in the file resolve. Until then, the README makes no eval claims.
 
 ## Phase 4: images, manifests, pipeline, cluster
-Deliverables: one image, two Deployments (`onboarding-api`, `onboarding-mock-bank`) via different commands (D-11, pending); Postgres StatefulSet per env; `k8s/{qa,prod}` kustomize (SecretStore, ExternalSecret,
+Deliverables: one image, two Deployments (`onboarding-api`, `onboarding-mock-bank`) selected by `command:` (D-11); Postgres StatefulSet per env; `k8s/{qa,prod}` kustomize (SecretStore, ExternalSecret,
 Ingress in the shared ALB group, probes, non-root, read-only root fs, resource requests sized to the namespace quota);
 `infra/terraform` own stack (ECR repo, namespaces `onboarding-qa/prod` with quota, deploy roles trusting this repo, IRSA role
 for Bedrock, secret shells, ESO roles, own ACM cert, Route 53 aliases for `qa-proj4-onboarding` / `proj4-onboarding`; reads P3 via data

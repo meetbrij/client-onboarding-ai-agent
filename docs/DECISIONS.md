@@ -32,7 +32,7 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
 ### D-01 · Repo name
 - **Context:** The user supplied `https://github.com/meetbrij/client-onboarding-ai-agent`.
 - **Recommendation:** Use it. Local folder is `ai-client-onboarding`, remote is `client-onboarding-ai-agent`; harmless. Python
-  package `onboarding`. ECR repo `client-onboarding`. K8s resources prefixed `onboarding-`.
+  package `onboarding`. ECR repo `client-onboarding` (D-11). K8s resources prefixed `onboarding-`.
 - **Consequence:** The new repo has a different GitHub OIDC `sub` (owner@id/repo@id form, per P3 CLAUDE.md), so P3's deploy
   roles will not trust it. See D-03.
 - **Status:** Accepted (user, 2026-10-05).
@@ -47,7 +47,7 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
 - **Roles:** `onboarding_app` (CRUD on non-audit tables, INSERT/SELECT on `audit_log`), `onboarding_owner` (migrations only).
 - **Limit to document:** a Postgres superuser can drop the trigger. The chain detects the edit afterwards; tail truncation is
   only detectable if the head hash is anchored elsewhere (we write it to the case trace and a log line at case end).
-- **Status:** Proposed.
+- **Status:** Accepted (user, 2026-10-06).
 
 ### D-03 · Our own Terraform stack in this repo; P3 is read, never modified (user-approved, expanded)
 - **Context:** P3's pipeline is frozen and its ECR repo is a single immutable `nodejs-app`. Its `app-env` module creates
@@ -158,25 +158,29 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
 - **Alternative (a fully separate cluster):** true isolation, but roughly the cost of another EKS control plane (about $73 a
   month at list price, check current pricing) plus nodes and NAT, duplicated add-ons and observability, and the KYC call
   would no longer be in-cluster. Not recommended for a portfolio project.
-- **Status:** Proposed; waiting for the user.
+- **Status:** Accepted (user, 2026-10-06).
 
-### D-11 · One image, two Deployments (revisited: P3's single-image rule no longer binds us)
-- **Context:** the original reason was P3's "single image per commit" contract. Because we copy the pipeline (D-04), that
-  contract is ours to change.
-- **Options:** (a) one image, `command:` selects `onboarding-api` or `onboarding-mock-bank`; (b) two images: matrix build, two
-  ECR repos, two Trivy scans and SBOMs, two kustomize image entries, two retags in the prod workflow.
-- **Recommendation:** still (a). The mock bank is a few hundred lines that exists only to be called; (b) doubles pipeline surface
-  for no real benefit. The mock bank's independence is shown by being a separate Deployment/Service with its own database
-  schema and its own idempotency store. Cheap to reverse later.
-- **Status:** Proposed; waiting for the user.
+### D-11 · One image, two Deployments (user decision, 2026-10-06; supersedes an earlier two-image choice)
+- **Decision:** one image built from one `Dockerfile`; two Deployments select the process by `command:` (`onboarding-api` or
+  `onboarding-mock-bank`). The user chose this to keep the pipeline simple.
+- **Benefits:** one build, one Trivy scan, one SBOM, one ECR repo, one retag; the pipeline stays close to P3's copy (D-04); the API
+  and the mock bank always deploy in lockstep, so they cannot drift.
+- **Trade-offs accepted:** the mock bank ships with the API's dependencies, so it has a larger attack surface and its scan
+  includes packages it never uses; the mock cannot be rolled out or versioned independently; the separation is a process and
+  Service boundary, not an image boundary. Because both start from the same code, keep `mock_bank/` free of imports from
+  `onboarding/` (a test enforces it) so it stays a stand-in for an external system.
+- **Kept anyway:** a contract test runs the API's bank client against the mock app in-process in CI.
+- **Status:** Accepted (user, 2026-10-06).
+
 
 ### D-12 · Run the graph in the API process; recover at startup; no Redis/arq
 - **Reasoning:** MIA's arq worker adds Redis and a second process. Case runs here take seconds, not minutes, and pause on a
   human. An asyncio task per case plus a startup recovery scan (re-invoke cases in non-terminal, non-waiting states from their
   checkpoint) gives crash-resume with fewer moving parts.
-- **Trade-off:** one API replica assumed for recovery (MIA D-25 has the same limit). Use an advisory lock per case so two
-  replicas cannot run the same case.
-- **Status:** Proposed.
+- **Postgres makes more than one replica safe:** a per-case `pg_advisory_lock` means only one process runs a given case at a
+  time, whichever replica received the request (MIA D-25 had to assume a single worker). We still deploy one API replica per
+  environment to stay within capacity (D-10); the design does not depend on that.
+- **Status:** Accepted (user, 2026-10-06).
 
 ### D-13 · Document bytes: in-process buffer, never in state or DB
 - **Context:** P3's KYC `POST /documents` takes multipart bytes, processes in memory, stores only SHA-256, extracted values
@@ -188,7 +192,20 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   files, not of the extracted fields. We store extracted values in the checkpoint (needed for screening and the officer page,
   synthetic data only) and keep them out of logs, traces, LLM prompts and audit payloads (audit stores field names and
   confidences, not values).
-- **Status:** Proposed.
+- **Re-evaluated with Postgres (user asked, 2026-10-06):** the decision stands, with these refinements.
+  - *Do not park bytes in Postgres.* Storing documents (even encrypted, with a TTL) would let a case survive a crash between
+    upload and extraction, but it contradicts the rule that uploaded documents are never persisted, and a database dump would then
+    hold identity documents. Rejected. A crash in that window shows "extraction unavailable" and the client re-uploads.
+  - *Replicas:* the buffer is per process, but the process that receives an upload is the one that runs the graph segment that
+    consumes it, under the case's advisory lock. Officer decisions need no bytes, so any replica may handle them. No sticky
+    routing needed.
+  - *Checkpoints keep copies of PII.* Every checkpoint row stores state, including extracted values, so values would otherwise
+    persist in many rows forever. Add a retention job: purge checkpoint rows of terminal cases after a configured number of days
+    (default proposal: 30). The audit log is unaffected because it holds no values (field names, confidences, hashes only).
+  - *At rest:* check that the `ebs-sc` StorageClass encrypts volumes (not verified in P3's manifests; if not, our Postgres
+    volume class sets `encrypted: "true"` or relies on account-level default encryption). Test data is synthetic regardless.
+  - *Postgres roles:* the app role gets DELETE only on checkpoint tables (for the purge), never on `audit_log`.
+- **Status:** Accepted (user, 2026-10-06), with the refinements above.
 
 ### D-14 · Recommendation set and approval guard
 - **Decision:** `recommendation.action` in `approve | reject | request_info | manual_review`, computed by Python from the rule
@@ -198,7 +215,7 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   hit lacks an officer disposition or extraction was unavailable. The officer may always reject or request more info.
 - **Why:** it keeps the "LLM never decides" rule testable, gives CBUAE-style human oversight, and no auto-approval path exists
   (even a clean case needs a human click).
-- **Status:** Proposed. Rating aggregation (max severity) and the rule thresholds are specified in `rules/README` in Phase 2.
+- **Status:** Accepted (user, 2026-10-06).
 
 ### D-15 · Evals deferred until P3's KYC service is live; then run end to end against it
 - **Decision (user, 2026-10-05):** hold the eval harness and first run until P3's KYC service works (its Bedrock quota is
@@ -217,7 +234,7 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
 ### D-16 · Manifests: kustomize, not Helm
 - **Reason:** P3's pipeline uses `kubectl apply -k` and rewrites the image in `kustomization.yaml`; MIA's Helm chart targets a
   different platform. Matching P3 means no pipeline redesign. The brief says "manifests/Helm"; this chooses manifests.
-- **Status:** Proposed.
+- **Status:** Accepted (user, 2026-10-06).
 
 ### D-17 · Prompts: Langfuse prompt management, four prompts, label-driven
 - **Prompts:** `onboarding-summarise-case`, `onboarding-explain-recommendation`, `onboarding-draft-missing-docs`,
@@ -225,7 +242,7 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   checked-in `prompts/*.txt`. Each LLM call records `{prompt_name, prompt_version, model_id, tokens}` in the audit row and the
   Langfuse generation. Evals pin an explicit version and record it in the result file. Prompts receive only rule outputs and
   hit reasons, never raw PII.
-- **Status:** Proposed.
+- **Status:** Accepted (user, 2026-10-06).
 
 ### D-18 · The "true hit" fixture and "no real people"
 - **Tension:** the brief bans real people as applicants but wants a true-hit case built from public-list names. A true hit
