@@ -40,8 +40,9 @@ jobs:
       postgres:
         image: postgres:16
         env:
+          # Throwaway database inside the job: trust auth, so no password appears in the workflow.
+          POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres-ci
           POSTGRES_DB: postgres
         ports:
           - 5432:5432
@@ -49,8 +50,8 @@ jobs:
           --health-cmd "pg_isready -U postgres" --health-interval 5s
           --health-timeout 3s --health-retries 20
     env:
-      MOCK_BANK_TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres-ci@localhost:5432/postgres
-      TEST_POSTGRES_ADMIN_URL: postgresql+psycopg://postgres:postgres-ci@localhost:5432/postgres
+      MOCK_BANK_TEST_DATABASE_URL: postgresql+psycopg://postgres@localhost:5432/postgres
+      TEST_POSTGRES_ADMIN_URL: postgresql+psycopg://postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
