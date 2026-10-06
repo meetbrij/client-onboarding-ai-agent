@@ -8,9 +8,10 @@ tests/test_routes_ignore_llm.py): the LLM never decides.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 DocType = Literal["id_document", "proof_of_address"]
 REQUIRED_DOCUMENTS: tuple[DocType, ...] = ("id_document", "proof_of_address")
@@ -32,11 +33,24 @@ Action = Literal["approve", "reject", "request_info", "manual_review"]
 Agreement = Literal["agree", "partial", "disagree", "unknown"]
 
 # Names of state fields whose content comes from an LLM (or its template stand-in). Advisory only.
-LLM_FIELDS = frozenset({"summary", "explanation", "missing_doc_draft", "llm_note", "drafted_by"})
+LLM_FIELDS = frozenset(
+    {"summary", "summary_by", "explanation", "missing_doc_draft", "llm_note", "drafted_by"}
+)
 
 
 class Applicant(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("dob")
+    @classmethod
+    def _dob_is_a_plausible_date(cls, v: str) -> str:
+        try:
+            parsed = date.fromisoformat(v)
+        except ValueError as exc:
+            raise ValueError("date of birth must be an ISO date (YYYY-MM-DD)") from exc
+        if not 1900 <= parsed.year <= date.today().year:
+            raise ValueError("date of birth is not plausible")
+        return v
 
     name: str
     aliases: list[str] = Field(default_factory=list)
@@ -135,6 +149,7 @@ class CaseState(BaseModel):
     case_id: str
     status: Status = "intake"
     applicant: Applicant
+    submitted_by: str = "system"
     documents: list[DocumentRef] = Field(default_factory=list)
     extraction: Extraction = Field(default_factory=Extraction)
     missing_documents: list[DocType] = Field(default_factory=list)
@@ -142,6 +157,7 @@ class CaseState(BaseModel):
     risk: Risk | None = None
     recommendation: Recommendation | None = None
     summary: str | None = None
+    summary_by: Literal["llm", "template"] | None = None
     missing_doc_draft: str | None = None  # never sent automatically
     decision: Decision | None = None
     execution: Execution | None = None

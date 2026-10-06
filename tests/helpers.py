@@ -7,7 +7,7 @@ from onboarding.fixtures import Case, load_cases
 from onboarding.graph.nodes import Deps, make_nodes
 from onboarding.llm.client import FakeLlm
 from onboarding.models import Applicant, CaseState, DocumentRef
-from onboarding.runner import build_offline_deps
+from onboarding.runner import build_offline_env
 
 CASES = load_cases(Path("evals/cases"))
 
@@ -16,9 +16,8 @@ def offline(
     case_id: str = "clean_approve", llm: FakeLlm | None = None
 ) -> tuple[Case, Deps, MemoryAuditLog, FakeLlm]:
     case = CASES[case_id]
-    audit = MemoryAuditLog()
-    llm = llm or FakeLlm(unavailable=case.llm_mode == "unavailable")
-    return case, build_offline_deps(case, audit, llm), audit, llm
+    env = build_offline_env(llm or FakeLlm(unavailable=case.llm_mode == "unavailable"))
+    return case, env.deps, env.audit, env.llm
 
 
 def initial_state(case: Case, deps: Deps) -> CaseState:

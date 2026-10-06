@@ -74,7 +74,8 @@ Not done in this phase: Bedrock has not been called for real (quota; stub-tested
 Postgres checkpointer (the graph ran on LangGraph's in-memory one); resume, execute and the API (Phase 3); CI has not run these tests on
 GitHub yet.
 
-## Phase 3: approval, resume, execute, UI, Langfuse, evals
+## Phase 3: approval, resume, execute, UI, Langfuse
+**Status: built 2026-10-06 on `feature/onb-003-approval-execute-api-ui`; results at the end of this section.**
 Deliverables: `approve` interrupt; Postgres checkpointer (`thread_id = case_id`, separate schema, strict msgpack); resume API
 with interrupt-bound decisions and compare-and-set; startup recovery (scan non-terminal cases, re-invoke); `execute` with
 idempotency and audit-before/after; checkpoint retention purge for terminal cases (D-13); mock bank uses its own database and role on the same Postgres instance; officer identity and separation of duties (D-08); minimal server-rendered officer UI
@@ -88,6 +89,25 @@ prompts fetched by label with cache and local fallback. (The eval harness moved 
 - UI e2e (httpx + HTML assertions) passes; CSP header test passes; no `innerHTML` and similar in static JS (P3's test pattern);
 - a Langfuse trace for one case shows node spans, a generation with prompt name+version, and the same version appears in the
   corresponding audit row;
+
+**Phase 3 results (2026-10-06):**
+- **Workflow:** all 12 fixtures run end to end through the real `CaseService` with the scripted officer: first pause, decision, the document
+  loop (`missing_poa`), execution at the mock bank, and the audit trail; 12/12 match their expected recommendation, rating, hits, rules,
+  degraded flags, full trajectory and final status; audit chains verified 12/12 (`python -m onboarding.graph.build --all`).
+- **Kill and resume (Postgres):** a case paused in one process is resumed and approved by a second, fresh process (new connections, empty buffer);
+  each node ran once across both, the KYC service was not called again, the audit chain verifies. Also tested: a crash after the claim is finished by
+  the next process, a document round across a restart, 8 concurrent decisions apply exactly once, a case held by one process is refused to another.
+- **Safety:** stale, duplicate, wrong-pause, concurrent, self-submitted, guard-violating and audit-failing decisions are refused and audited with nothing
+  applied; no edge reaches `execute` except from `approve`; `execute` refuses without an officer's approval; replaying the bank call returns the same
+  customer. Submitters see status only. Retention purge works under the application role and leaves the audit log untouched.
+- **UI:** server-rendered, no JavaScript, strict CSP, CSRF on every form, signed HttpOnly SameSite=Strict session, escaping tested with a hostile name.
+  Driven by hand in a real browser against the compose stack: queue, case page, guard banner, a clear-and-approve decision that created a customer.
+- **Langfuse:** with the real SDK and an in-memory exporter: one trace per case (id derived from the case id), node, tool and generation spans nested
+  correctly, prompt name and version on each generation, no personal data in spans, tracing failures never break a case. Prompt fetch by label with
+  fallback is tested with stubs.
+- **Counts:** 367 tests: 350 pass and 17 skip without a database; all 367 pass against the compose Postgres. ruff, ruff format, mypy and Gitleaks (on the files the repo tracks) are clean.
+- **Not done:** Langfuse Cloud and Bedrock were not called (no keys, zero quota); `scripts/sync_prompts.py` has not run against Langfuse; CI has not run
+  these tests on GitHub; the UI was checked in one browser only; no screenshots committed yet (Phase 5); Prometheus metrics endpoint is not added.
 
 ## Phase 3b: evals (deferred until P3's KYC service is live, D-15)
 Starts only when `POST /documents` on P3's KYC service succeeds in the cluster (Bedrock quota raised). Deliverables:

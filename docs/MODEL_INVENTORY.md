@@ -18,7 +18,9 @@ non-AI decision component, so a reviewer can see exactly what decides what.
 | Evaluation results | *none: evals have not been run (see EVALS.md, deferred to Phase 3b)* |
 | Known limits | May paraphrase imperfectly; output is advisory and checked deterministically where possible; throttled under low Bedrock quota, in which case templates are used |
 | Risk classification | *to be assigned against the institution's scheme* |
-| Kill switch | `LLM_ENABLED=false` |
+| Kill switch | `LLM_ENABLED=false` (tested: the workflow runs unchanged with templates) |
+| Output checks | Summary and explanation may not name a rule that did not fire (and an explanation must cite every fired rule); a draft must ask for exactly the missing documents and may not mention screening, risk or a decision. Failures fall back to templates and are audited as `llm_output_rejected` |
+| Traceability | Each call writes an `llm_call` audit row (prompt name and version, model id, token counts) and a Langfuse generation |
 
 ## Non-AI decision components (listed for completeness)
 

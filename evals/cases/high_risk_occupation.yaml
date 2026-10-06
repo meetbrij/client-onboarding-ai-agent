@@ -109,6 +109,7 @@ kyc_response:
       reviewed: false
 human_script:
 - action: approve
+  note: Source of funds documented by the officer
 expected:
   recommendation: manual_review
   risk_rating: medium

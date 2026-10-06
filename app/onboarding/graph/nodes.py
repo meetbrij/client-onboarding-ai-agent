@@ -12,25 +12,38 @@ Conventions
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
 from langgraph.types import interrupt
 
 from onboarding.audit import AuditEvent, AuditSink
+from onboarding.decision import (
+    DocumentsResume,
+    ResumeDecision,
+    apply_dispositions,
+    approval_interrupt_id,
+    check_decision,
+    documents_interrupt_id,
+    to_decision,
+)
 from onboarding.graph import names
 from onboarding.llm.service import LlmService
 from onboarding.models import (
     REQUIRED_DOCUMENTS,
     CaseState,
+    DocumentRef,
+    Execution,
     ExtractedField,
     Extraction,
 )
+from onboarding.observability import NoopTracer, Tracer
 from onboarding.rules.engine import assess_case
 from onboarding.rules.reference import Reference
 from onboarding.screening.scorer import ScreeningConfig, screen_applicant
 from onboarding.screening.unlist import SanctionsIndex
+from onboarding.tools.bank import BankClient
 from onboarding.tools.buffer import DocumentBuffer
 from onboarding.tools.kyc import KycClient, KycUnavailable
 
@@ -47,6 +60,9 @@ class Deps:
     reference: Reference
     llm: LlmService
     buffer: DocumentBuffer
+    bank: BankClient | None = None
+    max_info_rounds: int = 2
+    tracer: Tracer = field(default_factory=NoopTracer)
 
 
 def _flags(current: list[str], flag: str, on: bool) -> list[str]:
@@ -56,7 +72,9 @@ def _flags(current: list[str], flag: str, on: bool) -> list[str]:
 
 def audited(deps: Deps, node: str, body: Callable[[CaseState], tuple[Update, dict[str, Any]]]) -> NodeFn:
     def run(state: CaseState) -> Update:
-        update, payload = body(state)
+        with deps.tracer.span(node, case_id=state.case_id) as span:
+            update, payload = body(state)
+            span.update(**{k: v for k, v in payload.items() if isinstance(v, str | int | float | bool)})
         row = deps.audit.append(AuditEvent(state.case_id, names.NODE_COMPLETED, node=node, payload=payload))
         return {**update, "audit_head": row.row_hash}
 
@@ -109,7 +127,8 @@ def make_nodes(deps: Deps) -> dict[str, NodeFn]:
                 )
                 continue
             try:
-                result = deps.kyc.extract(content, doc.doc_type, filename=doc.doc_ref)
+                with deps.tracer.span("kyc.extract", case_id=state.case_id, doc_type=doc.doc_type):
+                    result = deps.kyc.extract(content, doc.doc_type, filename=doc.doc_ref)
             except KycUnavailable as exc:
                 failed.append(doc.doc_ref)
                 audit(
@@ -175,7 +194,13 @@ def make_nodes(deps: Deps) -> dict[str, NodeFn]:
             if f.name == "full_name" and f.value and not f.needs_review
         ]
         result = screen_applicant(state.applicant, extracted_names, deps.index, deps.screening_cfg)
+        previous = {h.entry_id: h for h in (state.screening.hits if state.screening else [])}
         for hit in result.hits:
+            earlier = previous.get(hit.entry_id)
+            if (
+                earlier and earlier.disposition
+            ):  # same list snapshot and same applicant: keep the officer's call
+                hit.disposition, hit.disposition_by = earlier.disposition, earlier.disposition_by
             note = deps.llm.annotate_hit(state, hit)
             if note:
                 hit.llm_note = note  # advisory only: classification and disposition are untouched
@@ -245,6 +270,7 @@ def make_nodes(deps: Deps) -> dict[str, NodeFn]:
             "risk": risk,
             "recommendation": recommendation,
             "summary": summary.text,
+            "summary_by": summary.drafted_by,
             "missing_doc_draft": draft.text if draft else None,
             "status": "awaiting_officer",
             "degraded": degraded,
@@ -253,10 +279,90 @@ def make_nodes(deps: Deps) -> dict[str, NodeFn]:
 
     # --------------------------------------------------------------- approve
     def approve(state: CaseState) -> Update:
-        """Pause for the officer. No side effects here: this node re-runs from the top on resume.
-        Phase 3 applies the decision, routes on it, and records it in the audit log."""
-        interrupt(approval_payload(state))
-        return {}
+        """Pause for the officer, then apply the decision that was checked and recorded before the resume.
+
+        Everything before `interrupt()` is repeated when the graph resumes, so it must have no side effects.
+        """
+        expected = approval_interrupt_id(state.case_id, state.info_rounds)
+        resume = ResumeDecision.model_validate(interrupt(approval_payload(state)))
+        if resume.interrupt_id != expected:
+            raise ValueError(f"decision answers {resume.interrupt_id}, but the case is waiting on {expected}")
+        problems = check_decision(state, resume, deps.max_info_rounds)
+        if problems:  # the API checks first; this is the second line of defence
+            raise ValueError("decision not allowed: " + "; ".join(problems))
+        assert state.screening is not None
+        screening = apply_dispositions(state.screening, dict(resume.dispositions), resume.officer)
+        status = {"approve": "executing", "reject": "rejected", "request_more_info": "awaiting_documents"}[
+            resume.action
+        ]
+        return {"decision": to_decision(resume), "screening": screening, "status": status}
+
+    # ------------------------------------------------------------ await_docs
+    def await_docs(state: CaseState) -> Update:
+        """Pause until the client's documents arrive. Only references travel in the resume value."""
+        expected = documents_interrupt_id(state.case_id, state.info_rounds)
+        payload = {
+            "kind": "await_docs",
+            "interrupt_id": expected,
+            "case_id": state.case_id,
+            "needed": list(state.missing_documents),
+            "extraction_available": state.extraction.available,
+            "info_round": state.info_rounds,
+        }
+        resume = DocumentsResume.model_validate(interrupt(payload))
+        if resume.interrupt_id != expected:
+            raise ValueError(f"documents answer {resume.interrupt_id}, but the case is waiting on {expected}")
+        arrived = [DocumentRef.model_validate(d) for d in resume.documents]
+        # a re-sent document replaces the earlier one of the same type that was not extracted
+        kept = [
+            d for d in state.documents if d.kyc_document_id or d.doc_type not in {a.doc_type for a in arrived}
+        ]
+        return {
+            "documents": [*kept, *arrived],
+            "info_rounds": state.info_rounds + 1,
+            "decision": None,
+            "status": "intake",
+        }
+
+    # --------------------------------------------------------------- execute
+    def execute(state: CaseState) -> tuple[Update, dict[str, Any]]:
+        """Create the customer in core banking. Reachable only from `approve` with an officer's approval."""
+        d = state.decision
+        if d is None or d.action != "approve" or not d.officer:
+            raise PermissionError("execute requires an officer's approval on the case")
+        if deps.bank is None:
+            raise RuntimeError("no core-banking client configured")
+        key = state.case_id
+        payload = {
+            "case_id": state.case_id,
+            "full_name": state.applicant.name,
+            "date_of_birth": state.applicant.dob,
+            "nationality": state.applicant.nationality,
+            "residence_country": state.applicant.residence_country,
+            "occupation": state.applicant.occupation,
+            "risk_rating": state.risk.rating if state.risk else "high",
+        }
+        audit(state, "execute_requested", names.EXECUTE, {"idempotency_key": key, "approved_by": d.officer})
+        with deps.tracer.span("bank.create_customer", case_id=state.case_id, idempotency_key=key):
+            result = deps.bank.create_customer(key, payload)
+        audit(
+            state,
+            "execute_completed",
+            names.EXECUTE,
+            {
+                "idempotency_key": key,
+                "customer_id": result.customer_id,
+                "replayed": result.replayed,
+                "attempts": result.attempts,
+            },
+        )
+        return (
+            {
+                "execution": Execution(customer_id=result.customer_id, idempotency_key=key),
+                "status": "approved",
+            },
+            {"customer_id": result.customer_id, "replayed": result.replayed},
+        )
 
     return {
         names.INTAKE: audited(deps, names.INTAKE, intake),
@@ -264,6 +370,8 @@ def make_nodes(deps: Deps) -> dict[str, NodeFn]:
         names.SCREEN: audited(deps, names.SCREEN, screen),
         names.ASSESS: audited(deps, names.ASSESS, assess),
         names.APPROVE: approve,
+        names.AWAIT_DOCS: await_docs,
+        names.EXECUTE: audited(deps, names.EXECUTE, execute),
     }
 
 
@@ -271,6 +379,8 @@ def approval_payload(state: CaseState) -> dict[str, Any]:
     """What the officer sees at the gate. JSON-safe, and free of DOB, ID numbers and addresses."""
     assert state.risk is not None and state.recommendation is not None and state.screening is not None
     return {
+        "kind": "approve",
+        "interrupt_id": approval_interrupt_id(state.case_id, state.info_rounds),
         "case_id": state.case_id,
         "applicant_name": state.applicant.name,
         "summary": state.summary,
