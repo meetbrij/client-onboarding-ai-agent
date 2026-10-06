@@ -104,6 +104,14 @@ audit_head: str                   # row_hash of the last audit row written for t
   P3's `app/eval/results/` (its committed run is all failed calls). Never quote CBUAE clause numbers unless read from the
   official text (see CONTROLS.md).
 
+## Branching (same model as P3)
+`main` = production, `qa` = integration branch cut from `main`, `feature/*` (and `bugfix/*`) cut from `qa`. Never branch a feature from
+`main`, never push directly to `main` or `qa`. Flow: push the feature branch, PR into `qa`; after the merge succeeds the QA pipeline
+runs (build, scans, ECR push, deploy to `onboarding-qa`). Then a PR `qa` into `main`; after that merge succeeds the prod pipeline runs
+(approval-gated retag and deploy to `onboarding-prod`). `hotfix/*` is cut from `main` and merged into `main` and `qa`. Names are
+lowercase `<type>/<ticket-id>-<short-slug>`, for example `feature/onb-001-branching-strategy`; releases are tagged `vMAJOR.MINOR.PATCH`.
+Until Phase 4 the only workflow is `ci.yml` (Gitleaks, lint, types, tests), which runs on PRs and pushes to `qa` and `main`; nothing deploys.
+
 ## Things that will bite you
 - **interrupt() re-runs the node from the top on resume.** Nothing before `interrupt()` may have side effects (audit writes,
   LLM calls, HTTP). Put the gate in its own node. Resume payloads are checkpointed: never put document bytes or PII in them.

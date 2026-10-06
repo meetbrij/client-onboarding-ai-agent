@@ -263,4 +263,11 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   increased monitoring medium; R-OCC-01 higher-risk occupation medium; R-DOC-01 missing document medium; R-DOC-02 low-confidence or
   malformed field medium; R-DOC-03 extraction unavailable high. The jurisdiction rules read `residence_country` and the ID document's
   `issuing_country`, not nationality alone, so a DRC national resident in the UAE does not fire R-JUR-02 (cases 2 and 11 rely on this).
-- **Status:** Proposed; waiting for the user. The fixtures already assume it.
+- **Status:** Accepted (user, 2026-10-06). The fixtures already assume it.
+
+### D-20 · Branching: `main`, `qa` (from main), `feature/*` (from qa), PR-only
+- **Decision (user, 2026-10-06):** as P3. Feature PR into `qa` triggers the QA pipeline on merge; PR `qa` into `main` triggers the prod
+  pipeline on merge. The Phase 1 work was committed straight to `main`; `qa` was cut from that commit, so all three start identical.
+- **Branch protection to configure on GitHub (not done by Claude):** `qa`: block force-push and deletion only (the QA pipeline pushes a
+  bot commit with the deployed tag, as in P3); `main`: require a PR, 0 approvals, block force-push and deletion.
+- **Status:** Accepted.
