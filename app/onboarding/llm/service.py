@@ -31,6 +31,7 @@ from onboarding.llm.facts import (
 )
 from onboarding.llm.prompts import PromptStore
 from onboarding.models import Action, CaseState, Hit, Recommendation, Risk
+from onboarding.observability import NoopTracer, Tracer
 
 RULE_ID = re.compile(r"R-[A-Z]{3}-\d{2}")
 MAX_NOTE = 400
@@ -49,6 +50,7 @@ class LlmService:
     audit: AuditSink
     enabled: bool = True
     annotate_hits: bool = True
+    tracer: Tracer = field(default_factory=NoopTracer)
     degraded: set[str] = field(default_factory=set)  # flags raised since the last reset
     _open: bool = False  # circuit breaker: after one outage in a run, stop calling the model
 
@@ -69,7 +71,17 @@ class LlmService:
         user = prompt.render(**values)
         started = time.monotonic()
         try:
-            result = self.client.complete(role, "You are an assistant to a bank compliance officer.", user)
+            with self.tracer.generation(
+                role, getattr(self.client, "model_id", "unknown"), prompt.name, prompt.version
+            ) as gen:
+                result = self.client.complete(
+                    role, "You are an assistant to a bank compliance officer.", user
+                )
+                gen.update(
+                    model=result.model_id,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                )
         except LlmUnavailable as exc:
             self._open = True
             self.degraded.add("llm_unavailable")

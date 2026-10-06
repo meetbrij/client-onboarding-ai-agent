@@ -61,7 +61,7 @@ Two services built into **one container image**, run as two Deployments with dif
 | KYC extraction | The existing P3 service, called over HTTP as a tool |
 | Officer UI | Minimal, server-rendered pages with a strict Content Security Policy; values rendered as text only |
 
-**Planned API** (names may change in Phase 2/3): `POST /cases` (create, with documents), `GET /cases`, `GET /cases/{id}` (state, hits, rules, recommendation), `POST /cases/{id}/decision` (officer decision, bound to the interrupt it answers), `POST /cases/{id}/documents` (documents for a "more info" round), `GET /healthz`, `/docs`. Mock bank: `POST /customers`, `GET /customers/{id}`, `GET /healthz`.
+**API** (OpenAPI at `/docs`; bearer tokens, roles `submitter` and `officer`): `POST /cases` (applicant JSON and documents), `GET /cases`, `GET /cases/{id}` (officers get hits, rules and the recommendation; submitters get status only), `POST /cases/{id}/decision` (officer only; carries the `interrupt_id` it answers), `POST /cases/{id}/documents` (for an information round), `GET /cases/{id}/audit` and `GET /audit/verify` (officer), `GET /healthz`. Officer and submitter pages are under `/ui`. Mock bank: `POST /customers` (needs `Idempotency-Key`), `GET /customers/{id}`, `GET /healthz`.
 
 **Key behaviours**
 - **Explainability:** each recommendation lists the rules that fired and every hit's match reasons. The LLM's wording restates those outputs and cannot change them.
@@ -311,18 +311,21 @@ Dockerfile  docker-compose.yml  pyproject.toml  tests/
 
 ## Local Development
 
-*Works now: `setup`, `docker compose up` (Postgres, mock bank, fake KYC), `pytest`, lint, the sanctions loader, the fixture generator, `python -m onboarding.graph.build --all` (offline run of all 12 fixtures to the approval pause) and `python -m onboarding.audit verify`. Not yet: the onboarding API, resume and execute, and the evals (Phases 3 to 3b).*
+*Works now: everything below, including the full stack in Docker Compose with the officer UI. Not yet: the evals (Phase 3b) and the cluster deployment (Phase 4).*
 
 ```bash
 make setup                                   # uv sync, pre-commit, copy .env.example to .env
-docker compose up -d --build                 # API :8000, mock bank :8001, Postgres, fake KYC :8002
-uv run pytest                                # offline: fake LLM, fake KYC, ephemeral Postgres
+docker compose up -d --build                 # Postgres, mock bank :8001, fake KYC :8002, migrations, API and UI :8000
+uv run python scripts/demo_submit.py near_miss_dob_mismatch   # submit a synthetic case, then open http://localhost:8000/ui
+uv run pytest                                # offline; add TEST_POSTGRES_ADMIN_URL (see CLAUDE.md) to include the Postgres tests
 uv run ruff check . && uv run mypy app tests
 uv run python scripts/load_sanctions.py      # rebuild the screening index from the vendored snapshot
-uv run python -m onboarding.audit verify     # prove the audit chain; non-zero exit on a break
+uv run python -m onboarding.graph.build --all   # all 12 fixture cases end to end, offline, compared with their expectations
+DATABASE_URL=postgresql+psycopg://onboarding_app:onboarding-app-local@localhost:5432/onboarding \
+  uv run python -m onboarding.audit verify   # prove the audit chain in the compose database; non-zero exit on a break
 ```
 
-Local runs need no AWS: the compose stack uses a fake KYC service and a fake LLM, so the whole workflow can be exercised and the officer pages opened at `http://localhost:8000`. To use real Bedrock, set `AWS_PROFILE`, `AWS_REGION` and `BEDROCK_MODEL_ID` (default: the Haiku 4.5 inference profile, which must be enabled in your account and have quota). To trace, set the Langfuse keys. Use synthetic data only; never put a real person's details into a case.
+Local runs need no AWS: the compose stack uses a fake KYC service and a fake LLM, so the whole workflow can be exercised and the officer pages opened at `http://localhost:8000/ui`. Local development tokens (dev only; qa and prod refuse to start without real ones): `dev-submitter-token` (submitter-1), `dev-officer-token` (officer-1), `dev-officer2-token` (officer-2). Submit as the submitter and decide as an officer: nobody decides a case they submitted. To use real Bedrock, set `AWS_PROFILE`, `AWS_REGION` and `BEDROCK_MODEL_ID` (default: the Haiku 4.5 inference profile, which must be enabled in your account and have quota). To trace, set the Langfuse keys. Use synthetic data only; never put a real person's details into a case.
 
 Settings are environment variables (documented in `.env.example` when the code lands): database URL, KYC base URL and API key, mock-bank URL, `BEDROCK_MODEL_ID`, `AWS_REGION`, `LLM_ENABLED`, Langfuse host and keys, `OTEL_EXPORTER_OTLP_ENDPOINT`, `MAX_INFO_ROUNDS`.
 
@@ -359,7 +362,7 @@ Settings are environment variables (documented in `.env.example` when the code l
 | 0 | README and architecture diagrams | done |
 | 1 | Repo scaffolding, sanctions loader, fixtures, mock core-banking | done (2026-10-06); CI not yet run on GitHub |
 | 2 | Graph to assess, rules, hash-chained audit log | done (2026-10-06), awaiting merge to `qa` |
-| 3 | Approval interrupt, checkpointer and resume, execute, officer UI, Langfuse | not started |
+| 3 | Approval interrupt, checkpointer and resume, execute, officer UI, Langfuse | done (2026-10-06), awaiting merge to `qa` |
 | 3b | Evals against the live KYC service | waiting on Bedrock quota |
 | 4 | Image, manifests, own Terraform stack, pipeline, qa then prod | not started |
 | 5 | Real eval numbers, controls evidence, demo clip | not started |

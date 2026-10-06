@@ -26,3 +26,14 @@ Accepted gaps, kept honest. Add an entry whenever a decision knowingly leaves so
 - **Audit event guard is a key denylist:** it blocks obvious personal-data keys and long strings, not every possible leak; payload design stays
   a review item.
 - **Offline runs use an in-memory audit log and checkpointer:** the append-only guarantee is a Postgres property, tested in `tests/test_audit_chain.py`.
+- **Langfuse Cloud and `scripts/sync_prompts.py` are untested against the real service** (no project keys yet). Tracing and prompt fetching are tested with
+  the real SDK and an in-memory exporter, and with stubs.
+- **Tokens, not SSO:** per-person bearer tokens (hashed) and a signed session cookie stand in for the bank's identity provider (D-08). No rate limiting, no
+  lockout, no token rotation workflow.
+- **One recovery path per restart:** `recover()` runs at startup and can be called by any replica; there is no periodic sweep, so a case that fails while the
+  service stays up waits for the next start (or for another officer action) to be retried. `last_error` shows the class of the failure.
+- **Officer notes are stored in the audit log verbatim** (they are the rationale an auditor wants). They are free text and could contain personal data if an
+  officer types it; guidance, not a technical control.
+- **The UI was exercised in one browser** (and by HTTP-level tests), not across browsers or with assistive technology.
+- **Extracted values live in the checkpoint until the retention purge** (default 30 days after the case closes); they are never in logs, audit rows, traces or prompts.
+- **No metrics endpoint yet** (P3's Prometheus pattern); logs are JSON on stdout and traces go to Langfuse.

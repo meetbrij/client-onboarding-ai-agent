@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Cases{% endblock %}
+{% block content %}
+<h1>Cases</h1>
+{% if rows %}
+<table>
+  <thead>
+    <tr>
+      <th>Applicant</th><th>Case</th><th>Status</th>
+      {% if who.role == "officer" %}<th>Rating</th><th>Recommendation</th>{% endif %}
+      <th>Updated (UTC)</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>{{ r.applicant_name }}</td>
+      <td><a href="/ui/cases/{{ r.case_id }}">{{ r.case_id }}</a></td>
+      <td><span class="badge s-{{ r.status }}">{{ status_label(r.status) }}</span></td>
+      {% if who.role == "officer" %}
+      <td>{% if r.risk_rating %}<span class="badge r-{{ r.risk_rating }}">{{ r.risk_rating }}</span>{% endif %}</td>
+      <td>{{ (r.recommendation or "")|replace("_", " ") }}</td>
+      {% endif %}
+      <td>{{ r.updated_at.strftime("%Y-%m-%d %H:%M") }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No cases yet. <a href="/ui/new">Create one</a>.</p>
+{% endif %}
+{% endblock %}

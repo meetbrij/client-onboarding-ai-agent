@@ -11,7 +11,7 @@ from onboarding.graph import names
 from onboarding.graph.nodes import make_nodes
 from onboarding.graph.routes import route_after_intake
 from onboarding.llm.client import FakeLlm
-from onboarding.models import CaseState, DocumentRef
+from onboarding.models import Applicant, CaseState, DocumentRef
 from tests.helpers import applicant, apply, initial_state, offline, run_nodes
 
 
@@ -40,7 +40,11 @@ def test_intake_with_no_documents_lists_both_as_missing():
 
 def test_intake_rejects_an_invalid_date_of_birth_and_the_route_ends_the_run():
     case, deps, audit, _ = offline()
-    s = CaseState(case_id="x", applicant=applicant(dob="not-a-date"))
+    # the model now rejects this at the edge; the node still refuses a corrupted state
+    bad = Applicant.model_construct(**{**applicant().model_dump(), "dob": "not-a-date"})
+    s = CaseState.model_construct(
+        case_id="x", applicant=bad, documents=[], missing_documents=[], degraded=[], info_rounds=0
+    )
     s = run_nodes(deps, s, names.INTAKE)
     assert s.status == "failed" and "date of birth" in (s.error or "")
     assert route_after_intake(s) == "__end__"

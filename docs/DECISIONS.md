@@ -289,3 +289,26 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   interrupted node) as `approve`.
 - **Strict checkpoint deserialisation:** `LANGGRAPH_STRICT_MSGPACK=true` with an allowlist of exactly the classes in `onboarding.models`.
 - **Status:** Proposed; waiting for the user.
+
+### D-22 · Phase 3 design choices (made while building; please review)
+- **One pause, one answer.** A pause has a deterministic id (`<case>:a<round>` for the officer, `<case>:d<round>` for documents). The service refuses
+  a decision or upload that answers any other pause. The order is: check, audit `decision_received` (if this fails nothing is applied), claim the pause
+  with a compare-and-set on the `cases` row and store the claimed decision, then resume the graph from the checkpoint. A crash after the claim is
+  finished by `recover()` at the next start (from any replica). This reuses MIA D-50 and D-28 but is simpler than MIA (no queue).
+- **The guard is stricter than the brief:** approval needs a disposition on every hit, no confirmed match, available extraction and complete documents,
+  and a note of at least 10 characters when it goes against the recommendation, above low risk, or after clearing a hit (the override rationale a
+  reviewer wants). Rejecting a case with a strong hit also needs a disposition. The `approve` node re-checks as a second line of defence.
+- **`cases` table as a projection** (status, who submitted, current pause, a claimed decision) next to LangGraph's checkpoints; it makes listing cheap and
+  the claim atomic. It holds the synthetic applicant name only. `final_json` keeps the outcome after a retention purge.
+- **Submitters see status only.** Showing a client their screening result or risk rating could tip them off, so the API and UI hide them from the
+  `submitter` role. Officers see everything. Nobody decides a case they submitted.
+- **Database roles:** `owner` migrates; `app` has SELECT/INSERT on `audit_log` (and nothing else on it), SELECT/INSERT/UPDATE on `cases`, and
+  SELECT/INSERT/UPDATE/DELETE on LangGraph's tables so the retention purge works. Tests prove each of these.
+- **Fixture and model changes made because of the guard and the edge:** the `high_risk_occupation` case now carries an approval note; the applicant model rejects
+  implausible birth dates at the edge (so `intake`'s own date check is a second line).
+- **Errors carry no applicant data** into `cases.last_error`, the audit log or logs: the exception class only.
+- **Langfuse:** trace id derived from the case id; a root span per run (`case:start`, `case:resume`, `case:recover`), a span per node, tool spans for the
+  KYC and bank calls, a generation per LLM call linked to the prompt version when the prompt came from Langfuse. Prompts: label `production` or `staging`
+  (`PROMPT_LABEL`), SDK cache 60 s, local copy when Langfuse is unreachable. `scripts/sync_prompts.py` creates a new prompt version only when the text differs.
+- **Dev tokens exist only in `dev`:** qa and prod refuse to start without `ONBOARDING_TOKENS` and `SESSION_SECRET`, and prod refuses the fake LLM.
+- **Status:** Proposed; waiting for the user.

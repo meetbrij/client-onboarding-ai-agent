@@ -1,10 +1,12 @@
 """Graph assembly and the offline CLI.
 
     START -> intake -(failed)-> END
-                   \\-> extract -> screen -> assess -> approve (interrupt) -> END    [Phase 2]
+                   \\-> extract -> screen -> assess -> approve (interrupt)
+        approve -(approve)-> execute -> END
+        approve -(reject)-> END
+        approve -(request more info)-> await_docs (interrupt) -> intake   (the loop)
 
-Phase 3 adds routing after `approve` (execute, reject, request more info), the Postgres checkpointer and
-the resume API. Offline CLI (fake KYC, fake LLM, in-memory audit and checkpoints, no AWS):
+Offline CLI (fake KYC, fake LLM, in-memory audit and checkpoints, no AWS):
 
     uv run python -m onboarding.graph.build --case evals/cases/clean_approve.yaml
     uv run python -m onboarding.graph.build --all        # every fixture; non-zero exit on any mismatch
@@ -13,7 +15,6 @@ the resume API. Offline CLI (fake KYC, fake LLM, in-memory audit and checkpoints
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 from typing import Any, cast
@@ -24,7 +25,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from onboarding.graph import names
 from onboarding.graph.nodes import Deps, make_nodes
-from onboarding.graph.routes import route_after_intake
+from onboarding.graph.routes import route_after_approve, route_after_intake
 from onboarding.models import CaseState
 
 
@@ -38,12 +39,14 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any]) -> CompiledS
     builder.add_edge(names.EXTRACT, names.SCREEN)
     builder.add_edge(names.SCREEN, names.ASSESS)
     builder.add_edge(names.ASSESS, names.APPROVE)
-    builder.add_edge(names.APPROVE, END)
+    builder.add_conditional_edges(names.APPROVE, route_after_approve, [names.EXECUTE, names.AWAIT_DOCS, END])
+    builder.add_edge(names.AWAIT_DOCS, names.INTAKE)
+    builder.add_edge(names.EXECUTE, END)
     return builder.compile(checkpointer=checkpointer)
 
 
 def main(argv: list[str] | None = None) -> int:
-    from onboarding.runner import compare_first_pass, load_fixture_cases, run_case
+    from onboarding.runner import compare_full, load_fixture_cases, run_case
 
     parser = argparse.ArgumentParser(prog="python -m onboarding.graph.build", description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
@@ -52,36 +55,33 @@ def main(argv: list[str] | None = None) -> int:
         "--all", action="store_true", help="run every fixture and compare with its expectations"
     )
     parser.add_argument("--cases-dir", type=Path, default=Path("evals/cases"))
-    parser.add_argument("--json", action="store_true", help="print the officer payload as JSON")
+    parser.add_argument("--json", action="store_true", help="print the final state as JSON")
     args = parser.parse_args(argv)
 
     cases = load_fixture_cases(args.cases_dir)
     selected = (
         list(cases.values()) if args.all else [next(c for c in cases.values() if c.id == args.case.stem)]
     )
-    failures = 0
+    failures = broken = 0
     for case in selected:
-        result = run_case(case)
-        problems = compare_first_pass(case, result)
-        flag = "ok  " if not problems else "FAIL"
+        result = run_case(case, full=True)
+        problems = compare_full(case, result)
+        chain = result.audit.verify()
         s = result.state
+        flag = "ok  " if not problems and chain.ok else "FAIL"
         print(
-            f"{flag} {case.id:28s} {' > '.join(result.trajectory)} | rating={s.risk.rating if s.risk else '-'} "
-            f"rec={s.recommendation.action if s.recommendation else '-'} hits={len(s.screening.hits) if s.screening else 0} "
-            f"degraded={s.degraded}"
+            f"{flag} {case.id:28s} {' > '.join(result.trajectory)} | rating={result.first_pass.risk.rating if result.first_pass and result.first_pass.risk else '-'} "
+            f"final={result.view.row.status} customer={s.execution.customer_id if s.execution else '-'} degraded={s.degraded}"
         )
         for p in problems:
             print(f"       - {p}")
         failures += bool(problems)
-        if args.json and result.approval_payload:
-            print(json.dumps(result.approval_payload, indent=2))
-    broken = 0
-    # each offline run has its own in-memory audit log; verify them all
-    for case in selected:
-        chain = run_case(case).audit.verify()
         broken += not chain.ok
+        if args.json:
+            print(s.model_dump_json(indent=2))
+        result.env.close()
     print(
-        f"{len(selected) - failures}/{len(selected)} cases match their expectations; "
+        f"{len(selected) - failures}/{len(selected)} cases match their expectations end to end; "
         f"audit chains verified: {len(selected) - broken}/{len(selected)}"
     )
     return 1 if failures or broken else 0

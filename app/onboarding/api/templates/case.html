@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block title %}Case {{ row.case_id }}{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="/ui/cases">Cases</a> / {{ row.case_id }}</p>
+<h1>{{ row.applicant_name }} <span class="badge s-{{ row.status }}">{{ status_label(row.status) }}</span></h1>
+
+{% if error %}
+<div class="alert error" role="alert">
+  <p>{{ error }}</p>
+  {% if problems %}<ul>{% for p in problems %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
+</div>
+{% endif %}
+{% if row.last_error %}<p class="alert warn">The last processing step reported a problem and will be retried: {{ row.last_error }}</p>{% endif %}
+
+{% if who.role != "officer" %}
+  {# ---------------- submitter view: status only; no screening or risk information ---------------- #}
+  <section class="card">
+    <h2>Status</h2>
+    <p>{{ status_label(row.status) }}.</p>
+    {% if row.status == "approved" and state and state.execution %}<p>Customer record created: <strong>{{ state.execution.customer_id }}</strong></p>{% endif %}
+  </section>
+  {% if row.waiting_on == "await_docs" %}
+  <section class="card">
+    <h2>Documents needed</h2>
+    <ul>{% for d in pending.needed %}<li>{{ d|replace("_", " ") }}</li>{% endfor %}</ul>
+    <form method="post" action="/ui/cases/{{ row.case_id }}/documents" enctype="multipart/form-data">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="interrupt_id" value="{{ pending.interrupt_id }}">
+      <label for="id_document">Identity document</label><input id="id_document" name="id_document" type="file">
+      <label for="proof_of_address">Proof of address</label><input id="proof_of_address" name="proof_of_address" type="file">
+      <button type="submit">Send documents</button>
+    </form>
+  </section>
+  {% endif %}
+{% elif state is none %}
+  {# ---------------- officer view after the checkpoint was purged ---------------- #}
+  <section class="card">
+    <h2>Outcome</h2>
+    <p class="muted">The detailed case data was purged under the retention policy. The audit log below is unchanged.</p>
+    {% if row.final %}<dl>
+      <dt>Result</dt><dd>{{ row.final.status }}</dd>
+      <dt>Risk rating</dt><dd>{{ row.final.risk_rating }}</dd>
+      <dt>Recommendation</dt><dd>{{ row.final.recommendation }}</dd>
+      <dt>Rules fired</dt><dd>{{ row.final.rules|join(", ") or "none" }}</dd>
+      <dt>Decided by</dt><dd>{% if row.final.decision %}{{ row.final.decision.officer }} ({{ row.final.decision.action }}){% endif %}</dd>
+      <dt>Customer</dt><dd>{{ row.final.customer_id or "none" }}</dd>
+    </dl>{% endif %}
+  </section>
+{% else %}
+  {# ---------------- officer view ---------------- #}
+  {% if state.degraded %}
+  <div class="alert warn" role="status">
+    <strong>Degraded:</strong>
+    {% for d in state.degraded %}
+      {% if d == "extraction_unavailable" %}document extraction was unavailable, so identity details were not checked against the documents.
+      {% elif d == "llm_unavailable" %}the AI model was unavailable, so the wording below comes from fixed templates.
+      {% elif d == "llm_disabled" %}the AI model is switched off, so the wording below comes from fixed templates.
+      {% else %}{{ d }}{% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if state.summary %}
+  <section class="card">
+    <h2>Summary <span class="tag">{% if state.summary_by == "llm" %}AI-drafted, advisory{% else %}template wording{% endif %}</span></h2>
+    <p>{{ state.summary }}</p>
+  </section>
+  {% endif %}
+
+  {% if state.recommendation and state.risk %}
+  <section class="card">
+    <h2>Recommendation <span class="badge r-{{ state.risk.rating }}">{{ state.risk.rating }} risk</span></h2>
+    <p class="big">{{ state.recommendation.action|replace("_", " ") }}</p>
+    <p class="muted">Decided by fixed rules, not by the AI model. A person must still decide.</p>
+    <p>{{ state.recommendation.explanation }} <span class="tag">{{ "AI-worded, advisory" if state.recommendation.drafted_by == "llm" else "template wording" }}</span></p>
+    {% if state.risk.escalated %}<p class="muted">The rating was raised one level because three or more rules fired.</p>{% endif %}
+    <h3>Rules that fired</h3>
+    {% if state.risk.fired_rules %}
+    <table>
+      <thead><tr><th>Rule</th><th>Severity</th><th>Why</th></tr></thead>
+      <tbody>{% for r in state.risk.fired_rules %}
+        <tr><td>{{ r.rule_id }}</td><td><span class="badge r-{{ r.severity }}">{{ r.severity }}</span></td><td>{{ r.explanation }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% else %}<p class="muted">No rules fired.</p>{% endif %}
+  </section>
+  {% endif %}
+
+  {% if state.screening %}
+  <section class="card">
+    <h2>Sanctions screening</h2>
+    <p class="muted">{{ state.screening.list_source }} Consolidated List, snapshot {{ state.screening.snapshot_date }} · {{ state.screening.algorithm }} · raised at {{ state.screening.raise_threshold|int }}, strong at {{ state.screening.strong_threshold|int }} · {{ state.screening.names_screened }} name(s) screened</p>
+    {% if state.screening.hits %}
+    <table>
+      <thead><tr><th>Entry</th><th>Matched</th><th>Score</th><th>Class</th><th>DOB</th><th>Nationality</th><th>Decision so far</th></tr></thead>
+      <tbody>{% for h in state.screening.hits %}
+        <tr>
+          <td>{{ h.entry_id }}</td>
+          <td>“{{ h.applicant_name_used }}” ~ “{{ h.matched_name }}”</td>
+          <td>{{ h.score }}</td>
+          <td><span class="badge h-{{ h.classification }}">{{ h.classification }}</span></td>
+          <td>{{ h.field_agreement.dob }}</td><td>{{ h.field_agreement.nationality }}</td>
+          <td>{% if h.disposition %}{{ h.disposition }} by {{ h.disposition_by }}{% else %}open{% endif %}</td>
+        </tr>
+        <tr class="detail"><td colspan="7">
+          <p>{{ h.reason }}</p>
+          {% if h.llm_note %}<p class="note"><span class="tag">AI note, advisory: does not clear the hit</span> {{ h.llm_note }}</p>{% endif %}
+        </td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% else %}<p class="muted">No hits at or above the threshold.</p>{% endif %}
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <h2>Documents</h2>
+    <ul>
+      {% for d in state.documents %}<li>{{ d.doc_type|replace("_", " ") }} · received, hash {{ d.sha256[:12] }}…{% if d.kyc_document_id %} · extracted{% endif %}</li>{% endfor %}
+      {% for d in state.missing_documents %}<li class="missing">{{ d|replace("_", " ") }} · <strong>missing</strong></li>{% endfor %}
+    </ul>
+    {% set flagged = state.extraction.fields|selectattr("needs_review")|list %}
+    {% if flagged %}<p>Fields needing review (values are not shown here):
+      {% for f in flagged %}<span class="tag">{{ f.document|replace("_", " ") }} · {{ f.name|replace("_", " ") }} · {{ f.reason }}</span> {% endfor %}</p>{% endif %}
+    {% if state.missing_doc_draft %}
+    <h3>Draft request to the applicant <span class="tag">not sent: a person must send it</span></h3>
+    <pre class="draft">{{ state.missing_doc_draft }}</pre>
+    {% endif %}
+  </section>
+
+  {% if row.waiting_on == "approve" and pending %}
+  <section class="card decide">
+    <h2>Your decision</h2>
+    {% if is_own %}<p class="alert warn">You submitted this case, so you cannot decide it. Another officer must.</p>{% endif %}
+    <form method="post" action="/ui/cases/{{ row.case_id }}/decision">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="interrupt_id" value="{{ pending.interrupt_id }}">
+      {% if state.screening and state.screening.hits %}
+      <fieldset>
+        <legend>Each sanctions hit needs a disposition before you can approve</legend>
+        {% for h in state.screening.hits %}
+        <div class="row">
+          <span>{{ h.entry_id }} ({{ h.classification }})</span>
+          <label><input type="radio" name="disp__{{ h.entry_id }}" value="cleared" {{ "checked" if (draft.disp or {}).get(h.entry_id, h.disposition) == "cleared" }}> Not a match (clear)</label>
+          <label><input type="radio" name="disp__{{ h.entry_id }}" value="confirmed" {{ "checked" if (draft.disp or {}).get(h.entry_id, h.disposition) == "confirmed" }}> Confirmed match</label>
+        </div>
+        {% endfor %}
+      </fieldset>
+      {% endif %}
+      <fieldset>
+        <legend>Action</legend>
+        <label><input type="radio" name="action" value="approve" required {{ "checked" if draft.action == "approve" }}> Approve and create the customer</label>
+        <label><input type="radio" name="action" value="reject" {{ "checked" if draft.action == "reject" }}> Reject</label>
+        <label><input type="radio" name="action" value="request_more_info" {{ "checked" if draft.action == "request_more_info" }}> Request more information ({{ state.info_rounds }} of 2 rounds used)</label>
+      </fieldset>
+      <label for="note">Note (at least 10 characters when approving against the recommendation, above low risk, or after clearing a hit)</label>
+      <textarea id="note" name="note" rows="3" maxlength="1000">{{ draft.note or "" }}</textarea>
+      <button type="submit" {{ "disabled" if is_own }}>Record decision</button>
+    </form>
+  </section>
+  {% elif row.waiting_on == "await_docs" and pending %}
+  <section class="card">
+    <h2>Waiting for documents</h2>
+    <p>Needed: {{ pending.needed|map("replace", "_", " ")|join(", ") or "a corrected set" }}. The client or the submitter can upload them here.</p>
+    <form method="post" action="/ui/cases/{{ row.case_id }}/documents" enctype="multipart/form-data">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="interrupt_id" value="{{ pending.interrupt_id }}">
+      <label for="id_document">Identity document</label><input id="id_document" name="id_document" type="file">
+      <label for="proof_of_address">Proof of address</label><input id="proof_of_address" name="proof_of_address" type="file">
+      <button type="submit">Send documents</button>
+    </form>
+  </section>
+  {% elif state.decision %}
+  <section class="card">
+    <h2>Decision</h2>
+    <p>{{ state.decision.action|replace("_", " ") }} by {{ state.decision.officer }} at {{ state.decision.at }}.</p>
+    {% if state.decision.note %}<p>“{{ state.decision.note }}”</p>{% endif %}
+    {% if state.execution %}<p>Customer record created: <strong>{{ state.execution.customer_id }}</strong> (key {{ state.execution.idempotency_key }}).</p>{% endif %}
+  </section>
+  {% endif %}
+{% endif %}
+
+{% if who.role == "officer" %}
+<section class="card">
+  <h2>Audit trail</h2>
+  <p class="muted">Append-only and hash-chained. Run <code>python -m onboarding.audit verify</code> to prove it is intact.</p>
+  <table class="small">
+    <thead><tr><th>#</th><th>Time (UTC)</th><th>Event</th><th>Node</th><th>Actor</th><th>Prompt</th><th>Model</th></tr></thead>
+    <tbody>{% for e in trail %}
+      <tr><td>{{ e.seq }}</td><td>{{ e.ts.strftime("%H:%M:%S") }}</td><td>{{ e.event_type }}</td><td>{{ e.node or "" }}</td><td>{{ e.actor }}</td>
+          <td>{% if e.prompt_name %}{{ e.prompt_name }} v{{ e.prompt_version }}{% endif %}</td><td>{{ e.model_id or "" }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}
