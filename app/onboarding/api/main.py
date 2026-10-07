@@ -16,6 +16,7 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import text
+from starlette.concurrency import run_in_threadpool
 
 from onboarding.auth import Principal, TokenStore
 from onboarding.bootstrap import build_service_from_env
@@ -219,7 +220,9 @@ def create_app(
             )
             raise HTTPException(status_code=422, detail=detail) from exc
         docs = await read_files({"id_document": id_document, "proof_of_address": proof_of_address})
-        view = svc().create_case(parsed, docs, submitted_by=who.id)
+        # The service is synchronous and can take a while (KYC, LLM, the graph): run it on a worker thread so the
+        # event loop keeps serving /healthz and other requests (a blocked loop fails the liveness probe).
+        view = await run_in_threadpool(svc().create_case, parsed, docs, who.id)
         return case_out(view, who)
 
     @app.get("/cases", response_model=list[CaseOut])
@@ -247,7 +250,8 @@ def create_app(
     ) -> CaseOut:
         visible(svc().get(case_id), who)
         docs = await read_files({"id_document": id_document, "proof_of_address": proof_of_address})
-        return case_out(svc().add_documents(case_id, interrupt_id, docs, who.id), who)
+        view = await run_in_threadpool(svc().add_documents, case_id, interrupt_id, docs, who.id)
+        return case_out(view, who)
 
     @app.get("/cases/{case_id}/audit")
     def case_audit(case_id: str, who: Annotated[Principal, Depends(officer)]) -> list[dict[str, Any]]:
