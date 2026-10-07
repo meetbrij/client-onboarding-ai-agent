@@ -39,7 +39,7 @@ jobs:
       prod_tag: ${{ steps.tag.outputs.prod_tag }}
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # The QA pipeline records the image it deployed in k8s/qa/kustomization.yaml.
       # That is the image promoted here. It is shown before approval so the approver can
@@ -88,10 +88,10 @@ jobs:
       PROD_TAG: ${{ needs.prepare.outputs.prod_tag }}
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configure AWS credentials (GitHub OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME_PROD }}
           aws-region: ${{ env.AWS_REGION }}

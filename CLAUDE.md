@@ -157,6 +157,8 @@ Until Phase 4 the only workflow is `ci.yml` (Gitleaks, lint, types, tests), whic
 - **Do not use `pg_advisory_lock` (blocking) or leave a transaction open in `migrate`**: both stall LangGraph's `CREATE INDEX CONCURRENTLY`.
 - **kustomize patches match env vars by name** (strategic merge), never by list index; the pipeline rewrites `newName`/`newTag` with `sed`, so those
   two keys must stay unique in each overlay's `kustomization.yaml`.
+- **A skipped job skips every job after it** in a GitHub Actions chain, even if the direct dependency succeeded. Never put a job-level `if` on an
+  optional job (SonarCloud): keep the job and make its steps conditional. `tests/test_workflows.py` guards this and the Node 24 action versions.
 - LangGraph strict msgpack: keep state to pydantic models/primitives; set `LANGGRAPH_STRICT_MSGPACK=true` (MIA D-24).
 - **The audit log refuses personal-data keys** (`dob`, `id_number`, `value`, `address`...) and long strings: name payload keys accordingly
   (`dob_agreement`, not `dob`). Rule `inputs` appear in audit rows, so keep them to identifiers, countries and counts.
