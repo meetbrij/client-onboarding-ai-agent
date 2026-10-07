@@ -242,7 +242,12 @@ def test_the_api_probes_tolerate_a_busy_process(env_docs):
 def test_documents_go_to_s3_and_the_bucket_name_is_filled_in_by_the_pipeline(env_docs):
     env, docs = env_docs
     api = next(d for d in of(docs, "Deployment") if d["metadata"]["name"] == "onboarding-api")
-    envs = {e["name"]: e.get("value") for e in next(c for c in api["spec"]["template"]["spec"]["containers"] if c["name"] == "api")["env"]}
+    envs = {
+        e["name"]: e.get("value")
+        for e in next(c for c in api["spec"]["template"]["spec"]["containers"] if c["name"] == "api")["env"]
+    }
     assert envs["DOCUMENT_STORE"] == "s3" and envs["DOCUMENT_BUCKET"] == "set-by-pipeline"
-    workflow = Path(".github/workflows/qa-cicd.yml" if env == "qa" else ".github/workflows/prod-cd.yaml").read_text()
+    workflow = Path(
+        ".github/workflows/qa-cicd.yml" if env == "qa" else ".github/workflows/prod-cd.yaml"
+    ).read_text()
     assert f"client-onboarding-docs-$ACCOUNT-{env}-$AWS_REGION" in workflow and "set-by-pipeline" in workflow
