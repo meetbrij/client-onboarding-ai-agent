@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout source code (including full history)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -63,7 +63,7 @@ jobs:
 
       - name: Upload Gitleaks Report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: gitleaks-report
           path: gitleaks-report.json
@@ -75,10 +75,10 @@ jobs:
     needs: gitleaks-scan
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -95,7 +95,7 @@ jobs:
 
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: checkov-kubernetes-report
           path: reports/
@@ -107,10 +107,10 @@ jobs:
     needs: gitleaks-scan
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -127,7 +127,7 @@ jobs:
 
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: checkov-dockerfile-report
           path: reports/
@@ -139,7 +139,7 @@ jobs:
     needs: gitleaks-scan
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Detect Terraform files
         id: tf
@@ -152,7 +152,7 @@ jobs:
 
       - name: Setup Python
         if: steps.tf.outputs.found == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -171,7 +171,7 @@ jobs:
 
       - name: Upload report
         if: always() && steps.tf.outputs.found == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: checkov-terraform-report
           path: reports/
@@ -183,7 +183,7 @@ jobs:
     needs: gitleaks-scan
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Run Trivy filesystem scan
         run: |
@@ -199,7 +199,7 @@ jobs:
 
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: trivy-fs-app-report
           path: trivy-app.txt
@@ -211,10 +211,10 @@ jobs:
     needs: [checkov-kubernetes, checkov-dockerfile, checkov-terraform, trivy-fs]
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           version: "0.12.18"
           enable-cache: true
@@ -250,10 +250,10 @@ jobs:
       TEST_POSTGRES_ADMIN_URL: postgresql+psycopg://postgres@localhost:5432/postgres
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           version: "0.12.18"
           enable-cache: true
@@ -272,16 +272,23 @@ jobs:
     name: SonarCloud Analysis Report
     runs-on: ubuntu-24.04
     needs: [lint, test]
-    # Off until a SonarCloud project exists for this repository: set the repository variable SONAR_ENABLED=true
-    # and the SONAR_TOKEN secret (sonar-project.properties holds the project key).
-    if: ${{ vars.SONAR_ENABLED == 'true' }}
+    # The job always runs (a skipped job would also skip every job after it: GitHub propagates a skip down the chain).
+    # Its steps run only when a SonarCloud project exists: set the repository variable SONAR_ENABLED=true and the
+    # SONAR_TOKEN secret (sonar-project.properties holds the project key).
     steps:
+      - name: SonarCloud is not enabled
+        if: ${{ vars.SONAR_ENABLED != 'true' }}
+        run: |
+          echo "SonarCloud analysis skipped. Set the repository variable SONAR_ENABLED=true to enable it." | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Checkout source code (full history for blame and new-code detection)
-        uses: actions/checkout@v4
+        if: ${{ vars.SONAR_ENABLED == 'true' }}
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: SonarCloud scan
+        if: ${{ vars.SONAR_ENABLED == 'true' }}
         uses: SonarSource/sonarqube-scan-action@v5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -293,12 +300,10 @@ jobs:
   docker-build:
     name: Docker Build Image
     runs-on: ubuntu-24.04
-    # Runs whether or not the optional SonarCloud job ran.
     needs: [lint, test, sonarcloud]
-    if: ${{ !cancelled() && needs.lint.result == 'success' && needs.test.result == 'success' && (needs.sonarcloud.result == 'success' || needs.sonarcloud.result == 'skipped') }}
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # The Dockerfile installs the dependencies, so no separate build job is needed.
       - name: Build image (tagged with git SHA)
@@ -309,7 +314,7 @@ jobs:
 
       # The exact image built here is what gets scanned and later pushed (build once).
       - name: Upload image archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: image
           path: image.tar
@@ -321,7 +326,7 @@ jobs:
     needs: docker-build
     steps:
       - name: Download image archive
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: image
 
@@ -340,7 +345,7 @@ jobs:
 
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: trivy-image-report
           path: trivy-image.txt
@@ -352,7 +357,7 @@ jobs:
     needs: docker-build
     steps:
       - name: Download image archive
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: image
 
@@ -367,7 +372,7 @@ jobs:
           echo "SBOM generated: $(wc -c < sbom.cdx.json) bytes" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: sbom
           path: sbom.cdx.json
@@ -383,12 +388,12 @@ jobs:
       id-token: write
     steps:
       - name: Download image archive
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: image
 
       - name: Configure AWS credentials (GitHub OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME_QA }}
           aws-region: ${{ env.AWS_REGION }}
@@ -428,10 +433,10 @@ jobs:
       id-token: write
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configure AWS credentials (GitHub OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME_QA }}
           aws-region: ${{ env.AWS_REGION }}
