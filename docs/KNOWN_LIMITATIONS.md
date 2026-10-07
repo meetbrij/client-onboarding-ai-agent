@@ -58,3 +58,9 @@ Accepted gaps, kept honest. Add an entry whenever a decision knowingly leaves so
   Anyone with S3 access in the account (not through the app) can read the bucket: limit it by IAM.
 - **If the document store is down at upload,** the case continues with `documents_not_retained` and the originals are lost (the applicant must resend); a stricter institution would refuse the upload.
 - **Officers can open documents of any case;** there is no per-officer assignment or four-eyes rule on viewing (every view is audited, which is how misuse would be found).
+- **Secrets can still be overwritten by anyone with `secretsmanager:PutSecretValue`** (D-25 protects the script, not the API). The previous version is kept as `AWSPREVIOUS` for the
+  restore steps in the infrastructure README, and Postgres does not pick up changed passwords by itself.
+- **The first QA incident left QA's `pg-secret` and `app-secret` overwritten** until the owner restores them; QA pods that restart before then will fail to start. (Status as of 2026-10-07; the
+  owner has scaled QA down meanwhile.) Remove this note when it is restored.
+- **Approval is blocked whenever extraction is unavailable,** even if an officer has verified the originals by eye. A "manually verified" attestation (audited, with a note) is proposed in
+  PLAN.md and not built.

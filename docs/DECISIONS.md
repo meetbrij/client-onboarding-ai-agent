@@ -351,3 +351,16 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   is now always created, and the existing one is kept with a `moved` block); the pipeline fills the bucket name in at deploy time because it contains the account id; CONTROLS
   gets C-18. Not decided here: a UAE-region bucket, KMS customer keys, malware scanning and legal-hold rules for real use.
 - **Status:** Accepted (user, 2026-10-07).
+
+### D-25 · Secrets are set by a script that refuses to overwrite (user request, 2026-10-07)
+- **Context:** the setup commands in the infrastructure README were run for the wrong environment (`qa`) after QA was live. They replaced the QA Postgres passwords in
+  Secrets Manager, but the database kept its originals (Postgres reads passwords only when its volume is first created). External Secrets would copy the new values into the
+  cluster within the hour and the next pod restart or deploy would fail to connect. Nothing was lost (the previous version is kept), but QA had to be restored by hand.
+- **Decision:** `scripts/set_secrets.sh <qa|prod>` replaces the copy-paste commands. It asks Secrets Manager only whether a current version exists (it never reads a value),
+  fills the secrets that are empty and **skips any that already have a value**, printing the existing version id. `--force <name>` replaces one secret and prints the old and new
+  version ids and the exact roll-back command. `pg-secret` additionally needs `--confirm-pg-secret-overwrite`, with a message that says why. `--dry-run` changes nothing. Values go
+  through a private temporary file, never a command line, and only the three sign-in tokens are printed, once.
+- **Evidence:** `tests/test_set_secrets.py` runs the real script against a fake `aws` (16 tests, including mutation checks that fail if the skip or the pg confirmation is removed).
+- **Not done:** an IAM policy or a Secrets Manager resource policy that blocks overwriting `pg-secret` for human users, and rotation. A script protects against slips, not against a
+  determined administrator.
+- **Status:** Accepted (user, 2026-10-07).
