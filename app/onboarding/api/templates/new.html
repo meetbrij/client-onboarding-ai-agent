@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}New case{% endblock %}
+{% block content %}
+<h1>New case</h1>
+{% if error %}<p class="alert error" role="alert">{{ error }}</p>{% endif %}
+<form method="post" action="/ui/new" enctype="multipart/form-data" class="card" data-busy="Submitting case…">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label for="name">Full name</label>
+  <input id="name" name="name" value="{{ values.name or '' }}" required maxlength="200">
+  <label for="aliases">Other names (comma separated)</label>
+  <input id="aliases" name="aliases" value="{{ values.aliases or '' }}">
+  <label for="dob">Date of birth (YYYY-MM-DD)</label>
+  <input id="dob" name="dob" value="{{ values.dob or '' }}" required pattern="\d{4}-\d{2}-\d{2}">
+  <label for="nationality">Nationality</label>
+  <input id="nationality" name="nationality" value="{{ values.nationality or '' }}" required>
+  <label for="residence_country">Country of residence</label>
+  <input id="residence_country" name="residence_country" value="{{ values.residence_country or '' }}" required>
+  <label for="occupation">Occupation</label>
+  <input id="occupation" name="occupation" value="{{ values.occupation or '' }}" required>
+  <label for="id_document">Identity document</label>
+  <input id="id_document" name="id_document" type="file">
+  <label for="proof_of_address">Proof of address</label>
+  <input id="proof_of_address" name="proof_of_address" type="file">
+  <p class="muted">Uploaded files are stored encrypted, can be opened only by compliance officers (each view is logged), and are deleted with the case after the retention period.</p>
+  <button type="submit">Submit case</button>
+  <p class="busy-note" role="status" hidden>Processing the case: reading the documents, screening and assessing. This can take up to a minute. Please keep this page open and do not submit again.</p>
+</form>
+{% endblock %}

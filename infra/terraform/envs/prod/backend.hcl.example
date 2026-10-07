@@ -1,0 +1,6 @@
+# Copy to backend.hcl (gitignored). Same bucket as the platform stack, its own key.
+bucket       = "<state-bucket-name>"
+key          = "onboarding/envs/prod/terraform.tfstate"
+region       = "ap-south-1"
+encrypt      = true
+use_lockfile = true

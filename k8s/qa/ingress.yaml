@@ -1,0 +1,29 @@
+# Joins the shared ALB group (P3's), with this project's own hostname. No certificate ARN: the ALB controller
+# finds the ACM certificate that covers the host listed under spec.tls.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: onboarding-ingress
+  annotations:
+    alb.ingress.kubernetes.io/group.name: devsecops-shared
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+spec:
+  ingressClassName: alb
+  tls:
+    - hosts:
+        - qa-proj4-onboarding.bolarbrijesh.com
+  rules:
+    - host: qa-proj4-onboarding.bolarbrijesh.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: onboarding-api
+                port:
+                  number: 80

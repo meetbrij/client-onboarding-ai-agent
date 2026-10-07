@@ -1,0 +1,198 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: onboarding-api
+  labels:
+    app: onboarding-api
+spec:
+  type: ClusterIP
+  selector:
+    app: onboarding-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: onboarding-api
+spec:
+  # One replica: it fits the shared cluster (DECISIONS D-10). The service itself is safe with more:
+  # a per-case lock keeps one runner per case and any replica can resume any case.
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: onboarding-api
+  template:
+    metadata:
+      labels:
+        app: onboarding-api
+    spec:
+      # IRSA: this service account carries the IAM role that may call Bedrock (created by Terraform). AWS credentials
+      # arrive through a projected token, so the default Kubernetes API token stays unmounted.
+      serviceAccountName: onboarding-api
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Creates or updates the schema as the owner role, and grants the application role its limited rights.
+        # Idempotent and guarded by an advisory lock, so it is safe on every start and with several replicas.
+        - name: migrate
+          image: onboarding
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -c
+            - 'for i in $(seq 1 60); do python -m onboarding.db migrate && exit 0; echo "database not ready, retrying"; sleep 5; done; exit 1'
+          env:
+            - name: HOME
+              value: /tmp
+            - name: ONBOARDING_OWNER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pg-secret
+                  key: ONBOARDING_OWNER_PASSWORD
+            - name: OWNER_DATABASE_URL
+              value: postgresql+psycopg://onboarding_owner:$(ONBOARDING_OWNER_PASSWORD)@postgres:5432/onboarding
+            - name: APP_DB_ROLE
+              value: onboarding_app
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: api
+          image: onboarding
+          imagePullPolicy: Always
+          command: ["sh", "-c", "exec uvicorn onboarding.api.main:get_app --factory --host 0.0.0.0 --port 8000"]
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: HOME
+              value: /tmp
+            - name: ENVIRONMENT
+              value: set-by-overlay
+            - name: ONBOARDING_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pg-secret
+                  key: ONBOARDING_APP_PASSWORD
+            - name: DATABASE_URL
+              value: postgresql+psycopg://onboarding_app:$(ONBOARDING_APP_PASSWORD)@postgres:5432/onboarding
+            # P3's KYC service, in its own namespace. It is an HTTP tool: if it is down or its model is throttled,
+            # cases reach the officer flagged "extraction unavailable".
+            - name: KYC_BASE_URL
+              value: set-by-overlay
+            - name: KYC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: KYC_API_KEY
+                  optional: true
+            - name: MOCK_BANK_URL
+              value: http://onboarding-mock-bank
+            # Original documents live in a private, encrypted S3 bucket (Terraform). Officers open them through the API only,
+            # and every view is audited. The bucket name contains the AWS account id, so the pipeline fills it in at deploy time.
+            - name: DOCUMENT_STORE
+              value: s3
+            - name: DOCUMENT_BUCKET
+              value: set-by-pipeline
+            # Officers, session signing and the smoke-test token. Not optional: the pod fails closed without them.
+            - name: ONBOARDING_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: ONBOARDING_TOKENS
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: SESSION_SECRET
+            # The LLM is advisory. India-only inference profile (inference stays in ap-south-1 and ap-south-2).
+            - name: LLM_BACKEND
+              value: bedrock
+            - name: LLM_ENABLED
+              value: "true"
+            - name: LLM_RETRY_ATTEMPTS
+              value: "2"
+            - name: AWS_REGION
+              value: ap-south-1
+            - name: BEDROCK_MODEL_ID
+              value: in.anthropic.claude-haiku-4-5-20251001-v1:0
+            - name: PROMPT_LABEL
+              value: production
+            # Langfuse is optional: with empty keys, tracing is off and prompts come from the image.
+            - name: LANGFUSE_HOST
+              value: https://cloud.langfuse.com
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-keys
+                  key: LANGFUSE_PUBLIC_KEY
+                  optional: true
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-keys
+                  key: LANGFUSE_SECRET_KEY
+                  optional: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+          # Generous: a case being processed can keep the process busy for a while, and a restart mid-request is worse than a slow probe.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

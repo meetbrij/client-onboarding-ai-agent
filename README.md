@@ -61,7 +61,7 @@ Two services built into **one container image**, run as two Deployments with dif
 | KYC extraction | The existing P3 service, called over HTTP as a tool |
 | Officer UI | Minimal, server-rendered pages with a strict Content Security Policy; values rendered as text only |
 
-**Planned API** (names may change in Phase 2/3): `POST /cases` (create, with documents), `GET /cases`, `GET /cases/{id}` (state, hits, rules, recommendation), `POST /cases/{id}/decision` (officer decision, bound to the interrupt it answers), `POST /cases/{id}/documents` (documents for a "more info" round), `GET /healthz`, `/docs`. Mock bank: `POST /customers`, `GET /customers/{id}`, `GET /healthz`.
+**API** (OpenAPI at `/docs`; bearer tokens, roles `submitter` and `officer`): `POST /cases` (applicant JSON and documents), `GET /cases`, `GET /cases/{id}` (officers get hits, rules and the recommendation; submitters get status only), `POST /cases/{id}/decision` (officer only; carries the `interrupt_id` it answers), `POST /cases/{id}/documents` (for an information round), `GET /cases/{id}/audit` and `GET /audit/verify` (officer), `GET /healthz`. Officer and submitter pages are under `/ui`. Mock bank: `POST /customers` (needs `Idempotency-Key`), `GET /customers/{id}`, `GET /healthz`.
 
 **Key behaviours**
 - **Explainability:** each recommendation lists the rules that fired and every hit's match reasons. The LLM's wording restates those outputs and cannot change them.
@@ -71,7 +71,8 @@ Two services built into **one container image**, run as two Deployments with dif
 
 **Privacy by design**
 - Everything is **synthetic**: no real ID numbers, no real people as applicants, every fixture marked `SPECIMEN`. Sanctions-hit test cases use synthetic applicants whose names are deliberate fuzzy variants of public-list entries.
-- Uploaded documents are never stored. Only a SHA-256 hash is kept, as in P3. Extracted field values live in the case checkpoint (needed to screen and to show the officer) and are purged for finished cases on a retention schedule.
+- **Original documents are kept, because an officer must be able to look at them** (and must when extraction fails). They go to a private, encrypted S3 bucket (a local folder in development), never into the case state, the checkpoint, logs, traces, prompts or the audit log, and never under the applicant's file name. Only officers can open them, through the API, never by a public link; **every view is written to the audit log before any byte is returned**, and the SHA-256 recorded at upload is checked on every read. They are deleted with the case's checkpoints after the retention window, with a bucket lifecycle rule as a backstop.
+- Extracted field values live in the case checkpoint (needed to screen and to show the officer) and are purged for finished cases on the same retention schedule.
 - Logs, traces, LLM prompts and audit payloads carry no DOB, ID number or address; at most `case_id` and synthetic names.
 - The sanctions list is a dated snapshot in `data/sanctions/`, never fetched at runtime in production; every screening result records the source and snapshot date.
 
@@ -245,6 +246,34 @@ flowchart TD
 
 Principles carried over from P3: build once and promote the artifact (retag, never rebuild); immutable SHA-tagged images, never `latest`; separate QA and prod roles that cannot assume each other; approval before prod. Branches: `feature/*` to `qa` to `main`. A deterministic eval gate joins the pipeline once the evals exist (Phase 3b).
 
+## Branching strategy
+
+Same model as P3: `main` (production), `qa` (cut from `main`, auto-deployed to QA), and short-lived `feature/*` branches cut from `qa`.
+
+```mermaid
+gitGraph
+    commit id: "phase 1" tag: "v0.1.0"
+    branch qa
+    checkout qa
+    branch feature/onb-002-graph
+    checkout feature/onb-002-graph
+    commit id: "feature work"
+    checkout qa
+    merge feature/onb-002-graph id: "PR into qa: QA pipeline runs"
+    checkout main
+    merge qa id: "PR into main: prod pipeline runs" tag: "v0.2.0"
+```
+
+| Branch | Cut from | Merged into | Triggers after a successful merge |
+|---|---|---|---|
+| `feature/*`, `bugfix/*` | `qa` | `qa` (PR) | QA pipeline: scans, build, ECR push, deploy to `onboarding-qa` |
+| `qa` | `main` | `main` (PR) | Prod pipeline: wait for approval, retag the QA image, deploy to `onboarding-prod` |
+| `hotfix/*` | `main` | `main` and `qa` | Prod pipeline, then back-sync to `qa` |
+
+Names are `<type>/<ticket-id>-<short-slug>` in lowercase. Nothing is pushed directly to `main` or `qa`. Until Phase 4 the only workflow is the CI
+job (secret scan, lint, types, tests); the QA and prod pipelines are added then. On GitHub, `qa` must not require PRs or status checks (the QA
+pipeline commits the deployed image tag back to it, as in P3); block force-push and deletion there. `main` requires a PR (0 approvals while solo) and blocks force-push and deletion.
+
 ## Environments and access
 
 `qa` and `prod` are two namespaces on one cluster, to keep cost down: `onboarding-qa` and `onboarding-prod`, with separate quotas, secrets, IAM roles and EKS access entries. The QA deploy role has no access to prod. The cluster is shared with P3, so the control plane and nodes are too; namespace RBAC and IAM scoping are the isolation boundary, as in P3. Destroying this project's Terraform stack removes our namespaces, roles, secrets, ECR repository and DNS records and leaves P3 running. The reverse is not true: if P3's platform stack is destroyed, our cluster goes with it.
@@ -263,7 +292,7 @@ Twelve synthetic cases covering a clean approval, a true sanctions hit, a DOB-mi
 
 ## Repository Layout
 
-Planned; directories appear as the phases land.
+What is in the repository today.
 
 ```
 CLAUDE.md                   Rules and commands for Claude Code in this repo
@@ -275,26 +304,29 @@ data/reference/             High-risk jurisdictions and occupations, screening c
 prompts/                    Local fallback copies of the Langfuse prompts
 scripts/                    load_sanctions.py and helpers
 evals/                      cases/, run.py, metrics.py, judge.py, results/<date>.json
-k8s/{qa,prod}/              kustomize manifests (P3 pattern)
-infra/terraform/            This project's own AWS and cluster resources
-.github/workflows/          QA and prod pipelines, copied from P3 and adapted
+k8s/{base,qa,prod}/         Kustomize: shared manifests (Postgres, API, mock bank, network policies) and the two environment overlays
+infra/terraform/            This project's own AWS and cluster resources: platform/, envs/qa, envs/prod, modules/ (see its README for apply steps)
+.github/workflows/          qa-cicd.yml and prod-cd.yaml, copied from P3 and adapted
 Dockerfile  docker-compose.yml  pyproject.toml  tests/
 ```
 
 ## Local Development
 
-*Works now: `setup`, `docker compose up` (Postgres, mock bank, fake KYC), `pytest`, lint, the sanctions loader and the fixture generator. Not yet: the onboarding API, the audit command and the evals (Phases 2 to 3b).*
+*Works now: everything below, including the full stack in Docker Compose with the officer UI. Not yet: the evals (Phase 3b) and the cluster deployment (Phase 4).*
 
 ```bash
 make setup                                   # uv sync, pre-commit, copy .env.example to .env
-docker compose up -d --build                 # API :8000, mock bank :8001, Postgres, fake KYC :8002
-uv run pytest                                # offline: fake LLM, fake KYC, ephemeral Postgres
+docker compose up -d --build                 # Postgres, mock bank :8001, fake KYC :8002, migrations, API and UI :8000
+uv run python scripts/demo_submit.py near_miss_dob_mismatch   # submit a synthetic case, then open http://localhost:8000/ui
+uv run pytest                                # offline; add TEST_POSTGRES_ADMIN_URL (see CLAUDE.md) to include the Postgres tests
 uv run ruff check . && uv run mypy app tests
 uv run python scripts/load_sanctions.py      # rebuild the screening index from the vendored snapshot
-uv run python -m onboarding.audit verify     # prove the audit chain; non-zero exit on a break
+uv run python -m onboarding.graph.build --all   # all 12 fixture cases end to end, offline, compared with their expectations
+DATABASE_URL=postgresql+psycopg://onboarding_app:onboarding-app-local@localhost:5432/onboarding \
+  uv run python -m onboarding.audit verify   # prove the audit chain in the compose database; non-zero exit on a break
 ```
 
-Local runs need no AWS: the compose stack uses a fake KYC service and a fake LLM, so the whole workflow can be exercised and the officer pages opened at `http://localhost:8000`. To use real Bedrock, set `AWS_PROFILE`, `AWS_REGION` and `BEDROCK_MODEL_ID` (default: the Haiku 4.5 inference profile, which must be enabled in your account and have quota). To trace, set the Langfuse keys. Use synthetic data only; never put a real person's details into a case.
+Local runs need no AWS: the compose stack uses a fake KYC service and a fake LLM, so the whole workflow can be exercised and the officer pages opened at `http://localhost:8000/ui`. Local development tokens (dev only; qa and prod refuse to start without real ones): `dev-submitter-token` (submitter-1), `dev-officer-token` (officer-1), `dev-officer2-token` (officer-2). Submit as the submitter and decide as an officer: nobody decides a case they submitted. To use real Bedrock, set `AWS_PROFILE`, `AWS_REGION` and `BEDROCK_MODEL_ID` (default: the Haiku 4.5 inference profile, which must be enabled in your account and have quota). To trace, set the Langfuse keys. Use synthetic data only; never put a real person's details into a case.
 
 Settings are environment variables (documented in `.env.example` when the code lands): database URL, KYC base URL and API key, mock-bank URL, `BEDROCK_MODEL_ID`, `AWS_REGION`, `LLM_ENABLED`, Langfuse host and keys, `OTEL_EXPORTER_OTLP_ENDPOINT`, `MAX_INFO_ROUNDS`.
 
@@ -330,10 +362,10 @@ Settings are environment variables (documented in `.env.example` when the code l
 |---|---|---|
 | 0 | README and architecture diagrams | done |
 | 1 | Repo scaffolding, sanctions loader, fixtures, mock core-banking | done (2026-10-06); CI not yet run on GitHub |
-| 2 | Graph to assess, rules, hash-chained audit log | not started |
-| 3 | Approval interrupt, checkpointer and resume, execute, officer UI, Langfuse | not started |
+| 2 | Graph to assess, rules, hash-chained audit log | done (2026-10-06), awaiting merge to `qa` |
+| 3 | Approval interrupt, checkpointer and resume, execute, officer UI, Langfuse | done (2026-10-06), awaiting merge to `qa` |
 | 3b | Evals against the live KYC service | waiting on Bedrock quota |
-| 4 | Image, manifests, own Terraform stack, pipeline, qa then prod | not started |
+| 4 | Image, manifests, own Terraform stack, pipeline, qa then prod | written and validated locally; not yet applied or run on the cluster |
 | 5 | Real eval numbers, controls evidence, demo clip | not started |
 
 ## License

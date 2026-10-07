@@ -1,5 +1,6 @@
-# Local development stack (Phase 1): Postgres, the mock core-banking service and a fake KYC service.
-# The onboarding API joins in Phase 2. All data is synthetic; the passwords below are local-only.
+# Local development stack: Postgres, the mock core-banking service, a fake KYC service and the onboarding API with
+# its officer UI at http://localhost:8000/ui (dev tokens: dev-officer-token, dev-officer2-token, dev-submitter-token).
+# The LLM is a fake, so no AWS is needed. All data is synthetic; the passwords below are local-only.
 services:
   postgres:
     image: postgres:16
@@ -49,5 +50,45 @@ services:
       timeout: 3s
       retries: 20
 
+  migrate:
+    build: .
+    command: ["python", "-m", "onboarding.db", "migrate"]
+    environment:
+      OWNER_DATABASE_URL: postgresql+psycopg://onboarding_owner:onboarding-owner-local@postgres:5432/onboarding
+      APP_DB_ROLE: onboarding_app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    command: ["sh", "-c", "exec uvicorn onboarding.api.main:get_app --factory --host 0.0.0.0 --port 8000"]
+    environment:
+      ENVIRONMENT: dev
+      DATABASE_URL: postgresql+psycopg://onboarding_app:onboarding-app-local@postgres:5432/onboarding
+      KYC_BASE_URL: http://fake-kyc:8002
+      MOCK_BANK_URL: http://mock-bank:8001
+      LLM_BACKEND: fake
+      DOCUMENT_STORE: local
+      DOCUMENT_DIR: /data/documents
+    volumes:
+      - docs:/data/documents
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      mock-bank:
+        condition: service_healthy
+      fake-kyc:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
 volumes:
   pgdata:
+  docs:

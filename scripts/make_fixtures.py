@@ -241,7 +241,7 @@ CASES = [
         7,
         "Dubai",
         exp("manual_review", "medium", "approved", [*STD, "execute"], rules=["R-OCC-01"]),
-        APPROVE,
+        [{"action": "approve", "note": "Source of funds documented by the officer"}],
     ),
     case(
         "multiple_issues",

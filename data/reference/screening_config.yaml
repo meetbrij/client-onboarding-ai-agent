@@ -1,0 +1,14 @@
+# Sanctions screening thresholds (DECISIONS D-06). Read by onboarding.screening.scorer.
+algorithm: rapidfuzz.token_sort_ratio
+# A listed entry is raised as a hit when the best name score (applicant name or alias against the listed
+# name or any alias, after normalisation) is at or above this value.
+raise_threshold: 85.0
+# A hit is "strong" at or above this score when neither DOB nor nationality disagrees with the list.
+# A DOB or nationality disagreement demotes it to "possible"; it is never dropped.
+strong_threshold: 92.0
+# Tuning evidence (development set of 10 variants and 25 negative names, separate from the eval cases; snapshot 2026-10-03):
+#   threshold 80: 9/10 variants caught, 2 false positives
+#   threshold 85: 8/10 variants caught, 1 false positive   <- chosen: screening favours recall, officers clear false positives
+#   threshold 90: 8/10 variants caught, 0 false positives
+# The 2 missed variants omit a middle name, which token_sort_ratio does not forgive. Tiny sample: illustrative, not statistical.
+# Reproduced by tests/test_screening_devset.py.

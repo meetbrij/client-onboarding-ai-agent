@@ -1,0 +1,185 @@
+name: Production CD Pipeline
+
+# Copied and adapted from P3 (meetbrij/prod-grade-e2e-devsecops-pipeline @ d9680a0): the same retag-and-promote design
+# (DECISIONS D-04). Nothing is rebuilt, rescanned or retested here; the QA pipeline did that.
+
+# Continuous delivery only: no build, no scans, no tests. Everything that makes an
+# image trustworthy already happened in the QA pipeline. This workflow promotes the
+# exact image QA built (retag, never rebuild) and deploys it to the prod namespace.
+#
+#   prepare             read which QA-built commit is being promoted (no AWS access)
+#   promote-and-deploy  waits for approval (GitHub Environment "prod"), retags the
+#                       image in ECR, deploys, and waits for the rollout
+
+on:
+  push:
+    branches:
+      - main
+  # Manual re-run (for example after a failed deploy). Still requires approval.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: client-onboarding
+  AWS_REGION: ap-south-1
+  EKS_CLUSTER_NAME: devsecops-eks
+  K8S_NAMESPACE: onboarding-prod
+  PROD_HOST: proj4-onboarding.bolarbrijesh.com
+
+jobs:
+  prepare:
+    name: Identify QA image to promote
+    runs-on: ubuntu-24.04
+    # Prod is only ever released from main.
+    if: github.ref == 'refs/heads/main'
+    outputs:
+      qa_sha: ${{ steps.tag.outputs.qa_sha }}
+      prod_tag: ${{ steps.tag.outputs.prod_tag }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      # The QA pipeline records the image it deployed in k8s/qa/kustomization.yaml.
+      # That is the image promoted here. It is shown before approval so the approver can
+      # check it is the image they tested in QA.
+      - name: Read the QA-built image tag
+        id: tag
+        run: |
+          QA_SHA=$(grep -E '^[[:space:]]*newTag:' k8s/qa/kustomization.yaml | head -1 | sed -E 's/.*newTag:[[:space:]]*"?([^" ]+)"?.*/\1/')
+          if ! echo "$QA_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::k8s/qa/kustomization.yaml has no deployed image SHA (found '$QA_SHA'). Deploy to QA first."
+            exit 1
+          fi
+          echo "qa_sha=$QA_SHA" >> "$GITHUB_OUTPUT"
+          echo "prod_tag=prod-$QA_SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Promoting to production"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| QA image | \`$QA_SHA\` |"
+            echo "| Prod tag | \`prod-$QA_SHA\` |"
+            echo "| QA commit | https://github.com/${{ github.repository }}/commit/$QA_SHA |"
+            echo "| Release commit on main | \`${{ github.sha }}\` |"
+            echo ""
+            echo "Approve only if this is the image you tested in QA."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  promote-and-deploy:
+    name: Promote image and deploy to EKS (prod)
+    runs-on: ubuntu-24.04
+    needs: prepare
+    # The environment holds the required-reviewer rule. The job pauses here until
+    # it is approved, and the prod deploy role only trusts jobs that run in it.
+    environment:
+      name: prod
+      url: https://${{ env.PROD_HOST }}
+    # One prod deploy at a time, never cancelled halfway.
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      QA_SHA: ${{ needs.prepare.outputs.qa_sha }}
+      PROD_TAG: ${{ needs.prepare.outputs.prod_tag }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials (GitHub OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME_PROD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Look up the ECR registry
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Retag, never rebuild: the prod tag points at the same manifest (digest) as the
+      # QA tag, so prod runs byte-for-byte what was scanned and tested in QA.
+      - name: Promote image (retag in ECR)
+        run: |
+          SRC=$(aws ecr batch-get-image --repository-name "$IMAGE_NAME" --image-ids imageTag="$QA_SHA" \
+            --query 'images[0].[imageId.imageDigest,imageManifestMediaType]' --output text)
+          SRC_DIGEST=$(echo "$SRC" | cut -f1)
+          SRC_TYPE=$(echo "$SRC" | cut -f2)
+          if [ -z "$SRC_DIGEST" ] || [ "$SRC_DIGEST" = "None" ]; then
+            echo "::error::QA image $IMAGE_NAME:$QA_SHA was not found in ECR."
+            exit 1
+          fi
+
+          DEST_DIGEST=$(aws ecr batch-get-image --repository-name "$IMAGE_NAME" --image-ids imageTag="$PROD_TAG" \
+            --query 'images[0].imageId.imageDigest' --output text)
+          if [ "$DEST_DIGEST" = "$SRC_DIGEST" ]; then
+            echo "$PROD_TAG already points at $SRC_DIGEST; nothing to retag."
+          elif [ -n "$DEST_DIGEST" ] && [ "$DEST_DIGEST" != "None" ]; then
+            echo "::error::$PROD_TAG already exists with a different digest ($DEST_DIGEST). Tags are immutable."
+            exit 1
+          else
+            MANIFEST=$(aws ecr batch-get-image --repository-name "$IMAGE_NAME" --image-ids imageTag="$QA_SHA" \
+              --query 'images[0].imageManifest' --output text)
+            aws ecr put-image --repository-name "$IMAGE_NAME" --image-tag "$PROD_TAG" \
+              --image-manifest "$MANIFEST" --image-manifest-media-type "$SRC_TYPE" > /dev/null
+            echo "Retagged $QA_SHA -> $PROD_TAG ($SRC_DIGEST)."
+          fi
+          {
+            echo "### Image promoted"
+            echo "\`$IMAGE_NAME:$QA_SHA\` -> \`$IMAGE_NAME:$PROD_TAG\`"
+            echo "Digest: \`$SRC_DIGEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Connect to the cluster
+        run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
+
+      # The registry host (which contains the account ID) is only written to a temporary
+      # copy. The prod image tag is not committed back: main is protected, and the ECR tag
+      # plus the GitHub deployment record are the record of what runs in prod.
+      - name: Deploy manifests
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          WORK="$(mktemp -d)"
+          cp -R k8s/. "$WORK/"
+          OVERLAY="$WORK/prod"
+          sed -i "s#newName: .*#newName: $REGISTRY/$IMAGE_NAME#; s#newTag: .*#newTag: \"$PROD_TAG\"#" "$OVERLAY/kustomization.yaml"
+          # The documents bucket name contains the account id, which is never written to the repository.
+          ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          sed -i "s#set-by-pipeline#client-onboarding-docs-$ACCOUNT-prod-$AWS_REGION#" "$WORK/base/api.yaml"
+          kubectl apply -k "$OVERLAY"
+
+      - name: Wait for the database, the mock bank and the API to be ready
+        run: |
+          kubectl rollout status statefulset/postgres -n "$K8S_NAMESPACE" --timeout=300s
+          kubectl rollout status deployment/onboarding-mock-bank -n "$K8S_NAMESPACE" --timeout=300s
+          kubectl rollout status deployment/onboarding-api -n "$K8S_NAMESPACE" --timeout=300s
+
+      - name: Show what is running
+        run: |
+          {
+            echo "### prod deployed: \`$PROD_TAG\`"
+            echo '```'
+            kubectl get pods,ingress -n "$K8S_NAMESPACE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Informational: warns but does not fail the release. It will fail until the
+      # Route 53 alias record for the prod host exists (created manually once).
+      - name: Smoke test
+        continue-on-error: true
+        run: |
+          for i in 1 2 3 4 5 6; do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' "https://$PROD_HOST/healthz" || true)
+            if [ "$CODE" = "200" ]; then
+              echo "https://$PROD_HOST/healthz returned 200." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "Attempt $i: got '$CODE', retrying in 20s..."
+            sleep 20
+          done
+          echo "::warning::https://$PROD_HOST/healthz did not return 200. If this is the first deploy, create the Route 53 alias record for the prod host."
+          exit 1

@@ -1,0 +1,40 @@
+# SPECIMEN: development set used to sanity-check the screening thresholds (DECISIONS D-06). It is separate from the
+# 12 evaluation cases in evals/cases/ so that the thresholds are not tuned on the eval set.
+# Variants are synthetic misspellings, re-orderings or omissions of public UN-list names; negatives are invented names.
+variants:   # name -> the entry it is a variant of
+  - {entry_id: TAi.113, name: "Shahauddin Delawar"}
+  - {entry_id: IQi.050, name: "Ugla Abid Sakr Al-Zubbaisi"}
+  - {entry_id: QDi.009, name: "Bilal Bin Marawn"}
+  - {entry_id: SSi.007, name: "Rengu Riak Reuben Malek"}
+  - {entry_id: TAi.138, name: "Mohammad Noorani"}            # omitted middle name
+  - {entry_id: KPi.042, name: "Coe Hwi"}
+  - {entry_id: SSi.003, name: "Jammes Koang Chuol"}
+  - {entry_id: TAi.072, name: "Sayyed Ghiassoudine Agha"}
+  - {entry_id: IQi.004, name: "Al-Tikriti Mahmud Hamid Abid"}
+  - {entry_id: TAi.168, name: "Qari Tokhi"}                  # omitted middle name
+negatives:
+  - Aisha Rahman
+  - Benjamin Clarke
+  - Carla Mendes
+  - David Okafor
+  - Elena Petrova
+  - Farid Haddad
+  - Grace Lim
+  - Hiroshi Tanaka
+  - Isabella Rossi
+  - Jonas Eriksson
+  - Karim Benali
+  - Leila Karimi
+  - Mohammed Al Suwaidi
+  - Nadine Haddad
+  - Omar Farouk Hassan
+  - Priyanka Nair
+  - Qasim Siddiqui
+  - Rania Abdullah
+  - Samuel Adeyemi
+  - Tariq Mahmood
+  - Usha Krishnan
+  - Victor Hugo Salazar
+  - Wei Zhang
+  - Yusuf Khan
+  - Zainab Al Hosani

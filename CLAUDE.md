@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude Code in this repository. Status: **Phase 1 done (scaffolding, sanctions loader, 12 fixtures, mock bank, compose). The graph, rules, audit log and API are not written yet (Phase 2).**
+Guidance for Claude Code in this repository. Status: **Phases 1 to 3 done; Phase 4 written and validated locally but not applied (Terraform, secrets and the first pipeline run are the user's to do: see `infra/terraform/README.md` and PLAN): the full workflow (intake to execute, with the officer pause, the document loop, crash-safe resume), Postgres checkpointer and hash-chained audit log, API, officer UI, Langfuse tracing and prompt management. Not yet: evals (3b, waiting for P3's KYC service), deploy (4).** Langfuse Cloud and Bedrock have not been called for real (no keys, zero quota): they are tested with the real SDK against an in-memory exporter, and with stubs.
 Build phase by phase as in `docs/PLAN.md`; decisions in `docs/DECISIONS.md` are accepted unless marked otherwise.
 
 ## Purpose
@@ -29,11 +29,13 @@ flowchart LR
 ```
 Every node writes an audit row. LLM calls are only the four listed in Hard rules.
 
-## Repo layout (planned)
+## Repo layout
 ```
 CLAUDE.md  README.md  docs/{PLAN,CONTROLS,DECISIONS,EVALS,MODEL_INVENTORY}.md  docs/adr/
-app/onboarding/        graph/ (state, nodes, build), rules/ (risk rules), screening/, audit/, llm/, tools/ (kyc, bank),
-                       api/, ui/ (templates + static)
+app/onboarding/        models, decision (the guard), service (CaseService), store (cases table), locks, db (migrate/purge),
+                       graph/ (nodes, routes, build), rules/, screening/, audit/, llm/, tools/ (kyc, bank, buffer),
+                       api/ (main, ui, templates, static), auth, config, bootstrap, observability, langfuse_tracing
+app/onboarding/documents.py   the document store (memory, local, S3) and type sniffing
 app/mock_bank/         separate small FastAPI service (same image, different command; must not import onboarding/)
 data/sanctions/        dated snapshot + manifest (source, date, sha256); scripts/load_sanctions.py builds the index
 data/reference/        high-risk jurisdictions and occupations (dated, sourced)
@@ -44,18 +46,26 @@ k8s/{qa,prod}/         kustomize, P3 pattern     infra/terraform/   our own stac
 Dockerfile  docker-compose.yml  pyproject.toml  tests/  (incl. API-to-mock-bank contract test)
 ```
 
-## Commands (targets; they must exist by the end of the phase noted in PLAN.md)
+## Commands
 ```bash
 make setup                                   # uv sync; create .env from .env.example
-docker compose up -d --build                 # works now: postgres, mock-bank :8001, fake-kyc :8002 (api joins in Phase 2)
+docker compose up -d --build                 # postgres, mock-bank, fake-kyc, migrate, api :8000 (fake LLM, no AWS); UI at /ui
+uv run python scripts/demo_submit.py near_miss_dob_mismatch   # submit a fixture case; sign in at /ui with dev-officer-token
+docker compose down -v                       # also needed after changing docker/init-databases.sh
 uv run python scripts/load_sanctions.py      # rebuild index from data/sanctions snapshot (never run in prod)
 uv run pytest                                # offline; set MOCK_BANK_TEST_DATABASE_URL (compose postgres) to include the Postgres race test
 uv run python scripts/make_fixtures.py       # regenerate evals/cases/*.yaml (committed; tests check them against the snapshot)
-uv run ruff check . && uv run mypy app tests
+make check                                   # ruff check, ruff format --check, mypy and the fixture run: what CI runs. Run it BEFORE every push
 # evals are deferred until P3's KYC service is live (D-15, Phase 3b):
 uv run python -m evals.run --live            # live KYC + Bedrock + Langfuse; writes evals/results/<date>.json
-uv run python -m onboarding.audit verify     # verify_audit_chain: exits non-zero and prints first broken row
-uv run python -m onboarding.graph.build --case evals/cases/clean_approve.yaml --decision approve   # one case, scripted human
+uv run python -m onboarding.audit verify     # verify_audit_chain against $DATABASE_URL: exit 1 and the first broken row on a break
+uv run python -m onboarding.graph.build --all   # offline: all 12 fixtures end to end (scripted officer), compared with their expectations
+uv run python -m onboarding.db migrate       # needs OWNER_DATABASE_URL and APP_DB_ROLE; `purge` deletes old checkpoints
+uv run python scripts/sync_prompts.py --label staging   # push prompts/ to Langfuse (needs LANGFUSE_* keys)
+# Postgres-backed tests (checkpointer, roles, restart/resume, races): docker compose up -d postgres, then
+#   export TEST_POSTGRES_ADMIN_URL=postgresql+psycopg://postgres:postgres-local@localhost:5432/postgres
+kubectl kustomize k8s/qa                     # render the manifests (no cluster needed); `tests/test_manifests.py` checks them
+(cd infra/terraform/envs/qa && terraform init -backend=false && terraform validate)   # validate without credentials
 # deploy: push to qa => QA pipeline; PR qa -> main => prod pipeline, approval-gated retag (see PLAN Phase 4)
 ```
 
@@ -65,13 +75,16 @@ case_id: str                      # = LangGraph thread_id
 status: intake|extracting|screening|assessing|awaiting_officer|awaiting_documents|executing|approved|rejected|failed
 applicant: {name, aliases[], dob, nationality, residence_country, occupation}    # synthetic
 documents: [{doc_ref, doc_type, sha256, kyc_document_id|None}]                   # never bytes
-extraction: {available: bool, fields: [{name, value, confidence, needs_review, reason}], doc_flags[]}
+extraction: {attempted, available (every provided doc extracted), fields: [{document, name, value, confidence, needs_review, reason}],
+             failed_documents[], doc_flags[]}
 missing_documents: [doc_type]
 screening: {list_source, snapshot_date, algorithm, threshold, hits: [{entry_id, matched_name, score,
-            field_agreement: {name, dob, nationality: agree|disagree|unknown}, reason, llm_note|None,
+            classification: strong|possible, field_agreement: {dob, nationality: agree|partial|disagree|unknown}, reason, llm_note|None,
             disposition: None|cleared|confirmed, disposition_by}]}
 risk: {rating: low|medium|high, fired_rules: [{rule_id, severity, inputs, explanation}]}
 recommendation: {action: approve|reject|request_info|manual_review, explanation, drafted_by: llm|template}
+summary, summary_by: llm|template # officer summary (LLM or template)
+submitted_by: str                 # separation of duties: the submitter never decides the case
 missing_doc_draft: str|None       # never sent automatically
 decision: {action: approve|reject|request_more_info, officer, note, at}|None
 execution: {customer_id, idempotency_key}|None
@@ -91,8 +104,10 @@ audit_head: str                   # row_hash of the last audit row written for t
   with deliberate fuzzy variants of public-list names. Every fixture and generated document is marked `SPECIMEN`.
 - **Sanctions list is vendored**, dated, in `data/sanctions/`. Never fetched at runtime in prod. Every screening result
   records source + snapshot date.
-- **No PII in traces or logs** beyond `case_id` and synthetic names. Uploaded documents are never persisted (hash only,
-  as in P3). Prompts sent to the LLM and Langfuse payloads carry no DOB, ID number or address.
+- **No PII in traces or logs** beyond `case_id` and synthetic names. Prompts sent to the LLM and Langfuse payloads carry no DOB, ID number or
+  address. **Original documents are kept only in the document store** (private encrypted S3; a local folder in dev), never in state, checkpoints,
+  the audit log, logs, traces or prompts, and never under the applicant's file name (D-24, which replaced "hash only"). Only officers can open
+  them, through the API, and the view is audited before any byte is returned.
 - **Audit log is append-only, enforced in Postgres**: trigger rejects UPDATE/DELETE/TRUNCATE, the app role has INSERT/SELECT
   only, each row stores `prev_hash` + `row_hash` (SHA-256 chain), `verify_audit_chain` proves integrity.
 - **Degrade, don't fail.** KYC down: case reaches the officer flagged "extraction unavailable". LLM down: rules and screening
@@ -104,11 +119,21 @@ audit_head: str                   # row_hash of the last audit row written for t
   P3's `app/eval/results/` (its committed run is all failed calls). Never quote CBUAE clause numbers unless read from the
   official text (see CONTROLS.md).
 
+## Branching (same model as P3)
+`main` = production, `qa` = integration branch cut from `main`, `feature/*` (and `bugfix/*`) cut from `qa`. Never branch a feature from
+`main`, never push directly to `main` or `qa`. Flow: push the feature branch, PR into `qa`; after the merge succeeds the QA pipeline
+runs (build, scans, ECR push, deploy to `onboarding-qa`). Then a PR `qa` into `main`; after that merge succeeds the prod pipeline runs
+(approval-gated retag and deploy to `onboarding-prod`). `hotfix/*` is cut from `main` and merged into `main` and `qa`. Names are
+lowercase `<type>/<ticket-id>-<short-slug>`, for example `feature/onb-001-branching-strategy`; releases are tagged `vMAJOR.MINOR.PATCH`.
+Until Phase 4 the only workflow is `ci.yml` (Gitleaks, lint, types, tests), which runs on PRs and pushes to `qa` and `main`; nothing deploys.
+
 ## Things that will bite you
 - **interrupt() re-runs the node from the top on resume.** Nothing before `interrupt()` may have side effects (audit writes,
   LLM calls, HTTP). Put the gate in its own node. Resume payloads are checkpointed: never put document bytes or PII in them.
-- **A resume decision is bound to the interrupt it answered** (MIA D-50): payload carries `interrupt_id`; stale or duplicate
-  resumes are dropped and audited. Resume is compare-and-set on `status`.
+- **A decision answers one pause.** The request carries `interrupt_id` (`<case>:a<round>`, `<case>:d<round>` for documents). The service
+  audits `decision_received` first (audit failure = nothing applied), then claims the pause with a compare-and-set on the `cases` row, then
+  resumes the graph. A claimed decision is stored in `pending_json`, so `service.recover()` finishes it after a crash. Stale, duplicate,
+  concurrent and self-submitted decisions are refused and audited (`action_refused`).
 - **Document bytes are not in state.** They live in an in-process buffer keyed by `case_id` until `extract` consumes them. A
   crash before extract means the client must re-upload; the case then shows "extraction unavailable" (no silent retry).
 - **Idempotency:** `execute` sends `Idempotency-Key: <case_id>`; mock-bank has a UNIQUE constraint on it and replays the stored
@@ -123,5 +148,33 @@ audit_head: str                   # row_hash of the last audit row written for t
   operators, ALB group and Route 53 zone are read via data sources and never modified. Destroying our stack must not touch P3.
 - **P3 scans are report-only** (`ENFORCE_SCANS: "false"`); only Gitleaks hard-fails. Do not claim Trivy/Checkov/Sonar as
   blocking gates unless we flip it in our copy.
+- **Errors never carry applicant data into storage:** `cases.last_error` and the `run_failed` audit row hold the exception class only;
+  logs use an allowlist of fields (`logging_setup.py`). A test injects an exception message with a DOB and checks stdout and the audit log.
+- **Submitters never see screening or risk** (tipping-off): `case_out` and the case page hide them; officers see everything. The UI has
+  one same-origin script (busy state only), a strict CSP (`script-src 'self'`) and CSRF tokens; tests ban inline script, `style=`, `|safe` and
+  `eval`/`innerHTML` in the UI code.
+- **FastAPI annotations:** `api/main.py` must not use `from __future__ import annotations` (it breaks `Depends` on local functions, giving a
+  silent 422). Form uploads come back as Starlette's `UploadFile`, not FastAPI's subclass.
+- **Langfuse SDK keeps process-wide state:** tests share one client per module (several create/shutdown cycles hang).
+- **First deploy needs the secret values first** (`infra/terraform/README.md`): the pods read them through External Secrets and wait without them.
+  The API's init container runs `onboarding.db migrate` (owner role, advisory-locked, idempotent); the app itself only has the restricted role.
+- **Do not use `pg_advisory_lock` (blocking) or leave a transaction open in `migrate`**: both stall LangGraph's `CREATE INDEX CONCURRENTLY`.
+- **kustomize patches match env vars by name** (strategic merge), never by list index; the pipeline rewrites `newName`/`newTag` with `sed`, so those
+  two keys must stay unique in each overlay's `kustomization.yaml`.
+- **A skipped job skips every job after it** in a GitHub Actions chain, even if the direct dependency succeeded. Never put a job-level `if` on an
+  optional job (SonarCloud): keep the job and make its steps conditional. `tests/test_workflows.py` guards this and the Node 24 action versions.
+- **Never run the (synchronous, slow) service on the event loop.** `async def` endpoints must call `create_case`, `decide` and `add_documents` through
+  `run_in_threadpool`; a blocked loop fails `/healthz`, the liveness probe restarts the pod mid-request (it did, on the first QA deploy).
+  `tests/test_api_responsiveness.py` runs a real server to prove it and has a static guard. A request over the ALB's 60 s idle timeout still returns 504 to
+  the browser while the case keeps processing; refresh the case page.
+- **Documents are untrusted bytes.** The type is sniffed from the bytes (`sniff_content_type`), only png/jpeg/webp/gif/pdf/text are shown inline,
+  everything else downloads, `nosniff` and a restrictive CSP are always sent, and the SHA-256 recorded at upload is checked on every read. Keep
+  those rules in `api/document_response.py` and `service.get_document`; ids go through `check_ids` (no path characters).
+- **Run `make check` after your last edit, not before it.** CI fails on `ruff format --check`; a test appended after the last format run broke the QA
+  pipeline's lint job once and blocked a deploy.
 - LangGraph strict msgpack: keep state to pydantic models/primitives; set `LANGGRAPH_STRICT_MSGPACK=true` (MIA D-24).
+- **The audit log refuses personal-data keys** (`dob`, `id_number`, `value`, `address`...) and long strings: name payload keys accordingly
+  (`dob_agreement`, not `dob`). Rule `inputs` appear in audit rows, so keep them to identifiers, countries and counts.
+- **Paths:** use `onboarding.paths` (env `ONBOARDING_DATA_DIR`, `ONBOARDING_PROMPTS_DIR`) never `Path(__file__)` tricks: the image installs
+  the package into a venv.
 - Hash chain concurrency: appends take `pg_advisory_xact_lock`; never insert audit rows from two connections without it.

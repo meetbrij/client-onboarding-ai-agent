@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Client onboarding{% endblock %} · SPECIMEN</title>
+  <link rel="stylesheet" href="/ui/static/ui.css">
+  <script src="/ui/static/ui.js" defer></script>
+</head>
+<body>
+  <div class="banner">SPECIMEN: synthetic data only. Do not enter real personal details.</div>
+  <header class="top">
+    <a class="brand" href="/ui/cases">Client onboarding</a>
+    {% if who %}
+    <nav>
+      <a href="/ui/cases">Cases</a>
+      <a href="/ui/new">New case</a>
+      <span class="who">{{ who.id }} · {{ who.role }}</span>
+      <form method="post" action="/ui/logout" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit" class="link">Sign out</button>
+      </form>
+    </nav>
+    {% endif %}
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

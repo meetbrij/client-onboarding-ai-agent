@@ -1,0 +1,6 @@
+# Copy to backend.hcl (gitignored). Use the state bucket created by P3's bootstrap stack (a different key, so no clash).
+bucket       = "<state-bucket-name>"
+key          = "onboarding/platform/terraform.tfstate"
+region       = "ap-south-1"
+encrypt      = true
+use_lockfile = true

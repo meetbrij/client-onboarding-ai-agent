@@ -17,3 +17,4 @@ gitleaks-report.json
 *.tfstate*
 *.tfvars
 !*.tfvars.example
+backend.hcl

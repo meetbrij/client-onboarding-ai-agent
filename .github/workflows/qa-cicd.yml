@@ -1,0 +1,514 @@
+name: QA CI/CD Pipeline
+
+# Copied and adapted from P3 (meetbrij/prod-grade-e2e-devsecops-pipeline @ d9680a0), not called as a reusable workflow (DECISIONS D-04).
+# Differences from P3: uv-based lint and tests with a Postgres service, the offline fixture run, our own ECR repository, namespace
+# and roles, Kustomize base and overlays under k8s/, an optional SonarCloud job (repository variable SONAR_ENABLED), and a smoke test
+# after the deploy. Scans only report while ENFORCE_SCANS is "false" (as in P3); Gitleaks always blocks.
+
+# Built incrementally. Current stages: Gitleaks, then Checkov + Trivy FS in
+# parallel, lint + tests, SonarCloud analysis, Docker build, then Trivy image scan
+# + SBOM in parallel, then (push to qa only) ECR push and EKS deploy.
+
+on:
+  pull_request:
+    branches:
+      - qa
+      - main
+  push:
+    branches:
+      - qa
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # While onboarding the scanners, findings are reported but do not fail the run.
+  # Set to "true" to make Checkov and Trivy block the pipeline on findings.
+  ENFORCE_SCANS: "false"
+  # One image runs both the API and the mock bank (DECISIONS D-11); the tag is always the git commit SHA.
+  IMAGE_NAME: client-onboarding
+  AWS_REGION: ap-south-1
+  EKS_CLUSTER_NAME: devsecops-eks
+  K8S_NAMESPACE: onboarding-qa
+
+concurrency:
+  group: qa-cicd-${{ github.ref }}
+  # Superseded PR runs can be cancelled; a push to qa may be mid-deploy and must finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gitleaks-scan:
+    name: Gitleaks Secret Scan
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout source code (including full history)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        # Pinned image. Runs as the runner user so git accepts repo ownership.
+        # Default exit code (1 on findings) is kept so a leak fails the pipeline.
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "${{ github.workspace }}:/repo" \
+            zricethezav/gitleaks:v8.18.4 detect \
+            --source=/repo \
+            --redact \
+            --report-format=json \
+            --report-path=/repo/gitleaks-report.json \
+            --verbose
+
+      - name: Upload Gitleaks Report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: gitleaks-report
+          path: gitleaks-report.json
+          if-no-files-found: ignore
+
+  checkov-kubernetes:
+    name: Checkov Kubernetes Scan
+    runs-on: ubuntu-24.04
+    needs: gitleaks-scan
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Checkov
+        run: pip install "checkov~=3.2"
+
+      - name: Run Checkov on Kubernetes manifests
+        run: |
+          SOFT=""; [ "$ENFORCE_SCANS" != "true" ] && SOFT="--soft-fail"
+          mkdir -p reports
+          checkov -d k8s --framework kubernetes $SOFT \
+            --output cli --output json --output-file-path reports/
+          cat reports/results_cli.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: checkov-kubernetes-report
+          path: reports/
+          if-no-files-found: ignore
+
+  checkov-dockerfile:
+    name: Checkov Dockerfile Scan
+    runs-on: ubuntu-24.04
+    needs: gitleaks-scan
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Checkov
+        run: pip install "checkov~=3.2"
+
+      - name: Run Checkov on Dockerfile
+        run: |
+          SOFT=""; [ "$ENFORCE_SCANS" != "true" ] && SOFT="--soft-fail"
+          mkdir -p reports
+          checkov -f Dockerfile --framework dockerfile $SOFT \
+            --output cli --output json --output-file-path reports/
+          cat reports/results_cli.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: checkov-dockerfile-report
+          path: reports/
+          if-no-files-found: ignore
+
+  checkov-terraform:
+    name: Checkov Terraform Scan
+    runs-on: ubuntu-24.04
+    needs: gitleaks-scan
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Detect Terraform files
+        id: tf
+        run: |
+          if [ -n "$(find . -name '*.tf' -not -path './.git/*' | head -1)" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No Terraform files yet; skipping." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Setup Python
+        if: steps.tf.outputs.found == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Checkov
+        if: steps.tf.outputs.found == 'true'
+        run: pip install "checkov~=3.2"
+
+      - name: Run Checkov on Terraform
+        if: steps.tf.outputs.found == 'true'
+        run: |
+          SOFT=""; [ "$ENFORCE_SCANS" != "true" ] && SOFT="--soft-fail"
+          mkdir -p reports
+          checkov -d infra/terraform --framework terraform $SOFT \
+            --output cli --output json --output-file-path reports/
+          cat reports/results_cli.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always() && steps.tf.outputs.found == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: checkov-terraform-report
+          path: reports/
+          if-no-files-found: ignore
+
+  trivy-fs:
+    name: Trivy FS Scan (app)
+    runs-on: ubuntu-24.04
+    needs: gitleaks-scan
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Run Trivy filesystem scan
+        run: |
+          EXIT=0; [ "$ENFORCE_SCANS" = "true" ] && EXIT=1
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "${{ github.workspace }}:/src" -w /src \
+            aquasec/trivy:0.57.1 fs \
+            --cache-dir /tmp/trivy-cache \
+            --scanners vuln --severity HIGH,CRITICAL --exit-code "$EXIT" \
+            --format table --output trivy-app.txt .
+          cat trivy-app.txt
+          { echo '```'; cat trivy-app.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: trivy-fs-app-report
+          path: trivy-app.txt
+          if-no-files-found: ignore
+
+  lint:
+    name: Lint and types
+    runs-on: ubuntu-24.04
+    needs: [checkov-kubernetes, checkov-dockerfile, checkov-terraform, trivy-fs]
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.18"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint, format check and types
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy app tests scripts
+
+  test:
+    name: Test
+    runs-on: ubuntu-24.04
+    needs: [checkov-kubernetes, checkov-dockerfile, checkov-terraform, trivy-fs]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          # Throwaway database inside the job: trust auth, so no password appears in the workflow.
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 3s --health-retries 20
+    env:
+      MOCK_BANK_TEST_DATABASE_URL: postgresql+psycopg://postgres@localhost:5432/postgres
+      TEST_POSTGRES_ADMIN_URL: postgresql+psycopg://postgres@localhost:5432/postgres
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.18"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run tests (includes the Postgres, resume and manifest tests)
+        run: uv run pytest --timeout=300
+
+      # All 12 synthetic cases end to end, offline: a regression in the workflow shows up here.
+      - name: Run the fixture cases
+        run: uv run python -m onboarding.graph.build --all
+
+  sonarcloud:
+    name: SonarCloud Analysis Report
+    runs-on: ubuntu-24.04
+    needs: [lint, test]
+    # The job always runs (a skipped job would also skip every job after it: GitHub propagates a skip down the chain).
+    # Its steps run only when a SonarCloud project exists: set the repository variable SONAR_ENABLED=true and the
+    # SONAR_TOKEN secret (sonar-project.properties holds the project key).
+    steps:
+      - name: SonarCloud is not enabled
+        if: ${{ vars.SONAR_ENABLED != 'true' }}
+        run: |
+          echo "SonarCloud analysis skipped. Set the repository variable SONAR_ENABLED=true to enable it." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Checkout source code (full history for blame and new-code detection)
+        if: ${{ vars.SONAR_ENABLED == 'true' }}
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: SonarCloud scan
+        if: ${{ vars.SONAR_ENABLED == 'true' }}
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.host.url=https://sonarcloud.io
+            -Dsonar.qualitygate.wait=${{ env.ENFORCE_SCANS }}
+
+  docker-build:
+    name: Docker Build Image
+    runs-on: ubuntu-24.04
+    needs: [lint, test, sonarcloud]
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      # The Dockerfile installs the dependencies, so no separate build job is needed.
+      - name: Build image (tagged with git SHA)
+        run: docker build -t "$IMAGE_NAME:${{ github.sha }}" .
+
+      - name: Save image as archive
+        run: docker save -o image.tar "$IMAGE_NAME:${{ github.sha }}"
+
+      # The exact image built here is what gets scanned and later pushed (build once).
+      - name: Upload image archive
+        uses: actions/upload-artifact@v6
+        with:
+          name: image
+          path: image.tar
+          retention-days: 1
+
+  trivy-image:
+    name: Trivy Image Scan
+    runs-on: ubuntu-24.04
+    needs: docker-build
+    steps:
+      - name: Download image archive
+        uses: actions/download-artifact@v7
+        with:
+          name: image
+
+      - name: Run Trivy image scan
+        run: |
+          EXIT=0; [ "$ENFORCE_SCANS" = "true" ] && EXIT=1
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "${{ github.workspace }}:/work" -w /work \
+            aquasec/trivy:0.57.1 image \
+            --cache-dir /tmp/trivy-cache \
+            --input image.tar \
+            --scanners vuln --severity HIGH,CRITICAL --exit-code "$EXIT" \
+            --format table --output trivy-image.txt
+          cat trivy-image.txt
+          { echo '```'; cat trivy-image.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: trivy-image-report
+          path: trivy-image.txt
+          if-no-files-found: ignore
+
+  sbom:
+    name: SBOM Report Generation
+    runs-on: ubuntu-24.04
+    needs: docker-build
+    steps:
+      - name: Download image archive
+        uses: actions/download-artifact@v7
+        with:
+          name: image
+
+      - name: Generate CycloneDX SBOM with Trivy
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "${{ github.workspace }}:/work" -w /work \
+            aquasec/trivy:0.57.1 image \
+            --cache-dir /tmp/trivy-cache \
+            --input image.tar \
+            --format cyclonedx --output sbom.cdx.json
+          echo "SBOM generated: $(wc -c < sbom.cdx.json) bytes" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v6
+        with:
+          name: sbom
+          path: sbom.cdx.json
+
+  push-to-ecr:
+    name: Push Image to ECR
+    runs-on: ubuntu-24.04
+    # Only the merged result on qa is published and deployed; PR runs stop at the scans.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/qa'
+    needs: [trivy-image, sbom]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download image archive
+        uses: actions/download-artifact@v7
+        with:
+          name: image
+
+      - name: Configure AWS credentials (GitHub OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME_QA }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ECR tags are immutable, so a re-run of the same commit must not push again.
+      - name: Push image tagged with the git SHA
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          TAG="${{ github.sha }}"
+          FOUND=$(aws ecr batch-get-image --repository-name "$IMAGE_NAME" \
+            --image-ids imageTag="$TAG" --query 'images[0].imageId.imageTag' --output text)
+          if [ "$FOUND" = "$TAG" ]; then
+            echo "Image $IMAGE_NAME:$TAG is already in ECR; skipping push." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          docker load -i image.tar
+          docker tag "$IMAGE_NAME:$TAG" "$REGISTRY/$IMAGE_NAME:$TAG"
+          docker push "$REGISTRY/$IMAGE_NAME:$TAG"
+          echo "Pushed $IMAGE_NAME:$TAG to ECR." >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-qa:
+    name: Deploy to EKS (qa)
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'push' && github.ref == 'refs/heads/qa'
+    needs: push-to-ecr
+    # Never run two deploys at once, and never cancel one halfway.
+    concurrency:
+      group: deploy-qa
+      cancel-in-progress: false
+    permissions:
+      contents: write # commit the deployed tag back to the repo
+      id-token: write
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials (GitHub OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME_QA }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Look up the ECR registry
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Connect to the cluster
+        run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
+
+      # Render with the registry and tag in a temporary copy. The registry host
+      # (which contains the account ID) is never written to the repository.
+      - name: Deploy manifests
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          TAG="${{ github.sha }}"
+          WORK="$(mktemp -d)"
+          cp -R k8s/. "$WORK/"
+          # the overlay refers to ../base, so the whole k8s tree is copied; only the overlay is edited and applied
+          OVERLAY="$WORK/qa"
+          sed -i "s#newName: .*#newName: $REGISTRY/$IMAGE_NAME#; s#newTag: .*#newTag: \"$TAG\"#" "$OVERLAY/kustomization.yaml"
+          # The documents bucket name contains the account id, which is never written to the repository.
+          ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          sed -i "s#set-by-pipeline#client-onboarding-docs-$ACCOUNT-qa-$AWS_REGION#" "$WORK/base/api.yaml"
+          kubectl apply -k "$OVERLAY"
+
+      # On the very first deploy the pods wait for the Secrets Manager values (infra/terraform/README.md, step 4).
+      - name: Wait for the database, the mock bank and the API to be ready
+        run: |
+          kubectl rollout status statefulset/postgres -n "$K8S_NAMESPACE" --timeout=300s
+          kubectl rollout status deployment/onboarding-mock-bank -n "$K8S_NAMESPACE" --timeout=300s
+          kubectl rollout status deployment/onboarding-api -n "$K8S_NAMESPACE" --timeout=300s
+
+      - name: Show where the app is exposed
+        run: |
+          {
+            echo "### qa deployed: \`${{ github.sha }}\`"
+            echo '```'
+            kubectl get pods,ingress -n "$K8S_NAMESPACE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Record what is deployed so the repo matches the cluster. The prod pipeline reads
+      # this tag to know which QA-built image to promote. The bot's push does not retrigger
+      # this workflow.
+      - name: Commit the deployed image tag
+        run: |
+          TAG="${{ github.sha }}"
+          sed -i "s#newTag: .*#newTag: \"$TAG\"#" k8s/qa/kustomization.yaml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add k8s/qa/kustomization.yaml
+          if git diff --cached --quiet; then
+            echo "Tag already recorded."
+          else
+            git commit -m "ci: record deployed qa image $TAG [skip ci]"
+            git pull --rebase origin qa
+            git push origin HEAD:qa
+          fi
+
+      # Submits one synthetic case through the cluster Service and checks it reaches the officer. The smoke token is a
+      # submitter-only token kept in the app secret. Extraction may be reported unavailable (P3's KYC service needs its
+      # Bedrock quota); the case must still reach the officer, because the workflow degrades rather than fails.
+      - name: Smoke test
+        run: |
+          kubectl port-forward -n "$K8S_NAMESPACE" svc/onboarding-api 8080:80 >/dev/null 2>&1 &
+          PF=$!
+          trap 'kill $PF' EXIT
+          sleep 5
+          SMOKE_TOKEN="$(kubectl get secret app-secret -n "$K8S_NAMESPACE" -o jsonpath='{.data.SMOKE_TOKEN}' | base64 -d)"
+          echo "::add-mask::$SMOKE_TOKEN"
+          pip install --quiet httpx
+          SMOKE_TOKEN="$SMOKE_TOKEN" python scripts/smoke_test.py --url http://127.0.0.1:8080 | tee -a "$GITHUB_STEP_SUMMARY"

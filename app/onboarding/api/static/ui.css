@@ -1,0 +1,62 @@
+:root {
+  --bg: #f6f7f9; --fg: #1b1f24; --muted: #5b6573; --card: #ffffff; --line: #d9dee5; --accent: #1f4fd8;
+  --ok: #17693a; --warn-bg: #fff4d6; --warn-fg: #6b4700; --err-bg: #fde4e4; --err-fg: #8a1c1c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1216; --fg: #e7eaee; --muted: #9aa5b3; --card: #171c22; --line: #2a323c; --accent: #7aa2ff;
+    --ok: #5fd08a; --warn-bg: #3a2f10; --warn-fg: #f3d58a; --err-bg: #3b1a1a; --err-fg: #f5a3a3;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.banner { background: #1b1f24; color: #ffd24a; text-align: center; font-size: 13px; padding: 4px 8px; letter-spacing: .02em; }
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
+.brand { font-weight: 700; color: var(--fg); text-decoration: none; }
+nav { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+nav a, .crumbs a, a { color: var(--accent); }
+.who { color: var(--muted); font-size: 14px; }
+main { max-width: 1040px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 24px; margin: 8px 0 12px; } h2 { font-size: 18px; margin: 0 0 8px; } h3 { font-size: 15px; margin: 16px 0 6px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin: 0 0 16px; }
+.narrow { max-width: 420px; }
+.muted { color: var(--muted); } .big { font-size: 22px; font-weight: 700; margin: 4px 0; text-transform: capitalize; }
+table { width: 100%; border-collapse: collapse; background: var(--card); font-size: 14px; display: block; overflow-x: auto; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr.detail td { border-bottom: 2px solid var(--line); color: var(--muted); }
+table.small { font-size: 12px; }
+.badge, .tag { display: inline-block; border-radius: 999px; padding: 1px 10px; font-size: 12px; border: 1px solid var(--line); }
+.tag { background: transparent; color: var(--muted); }
+.badge.r-high, .badge.h-strong, .badge.s-rejected, .badge.s-failed { background: var(--err-bg); color: var(--err-fg); }
+.badge.r-medium, .badge.h-possible, .badge.s-awaiting_officer, .badge.s-awaiting_documents { background: var(--warn-bg); color: var(--warn-fg); }
+.badge.r-low, .badge.s-approved { color: var(--ok); }
+.alert { border-radius: 8px; padding: 10px 14px; margin: 0 0 16px; }
+.alert.error { background: var(--err-bg); color: var(--err-fg); } .alert.warn { background: var(--warn-bg); color: var(--warn-fg); }
+.alert ul { margin: 6px 0 0; padding-left: 20px; }
+label { display: block; margin: 12px 0 4px; font-weight: 600; }
+fieldset label, .row label { display: inline-block; font-weight: 400; margin: 4px 14px 4px 0; }
+fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 12px 0; }
+input[type=text], input[type=password], input:not([type]), textarea, input[type=file] { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
+button { margin-top: 14px; padding: 8px 16px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.link { background: none; color: var(--accent); padding: 0; margin: 0; text-decoration: underline; }
+form.inline { display: inline; }
+pre.draft { white-space: pre-wrap; background: var(--bg); border: 1px dashed var(--line); padding: 10px; border-radius: 6px; font: inherit; }
+.note { margin: 4px 0 0; } li.missing { color: var(--err-fg); }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; } dt { color: var(--muted); } dd { margin: 0; }
+code { background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+@media (max-width: 600px) { main { padding: 12px; } h1 { font-size: 20px; } }
+
+/* ---- busy state for slow forms (see ui.js) ---- */
+[hidden] { display: none !important; }
+form.submitting { opacity: .75; }
+form.submitting input, form.submitting textarea, form.submitting select, form.submitting label { cursor: progress; }
+.busy-note { margin: 12px 0 0; padding: 8px 12px; border-radius: 6px; background: var(--warn-bg); color: var(--warn-fg); font-size: 14px; }
+button.loading { cursor: progress; }
+button.loading::before {
+  content: ""; display: inline-block; width: 14px; height: 14px; margin-right: 8px; vertical-align: -2px;
+  border: 2px solid rgba(255, 255, 255, .45); border-top-color: #fff; border-radius: 50%;
+  animation: onb-spin .8s linear infinite;
+}
+@keyframes onb-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { button.loading::before { animation: none; border-top-color: rgba(255, 255, 255, .45); } }

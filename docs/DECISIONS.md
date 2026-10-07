@@ -182,7 +182,7 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   environment to stay within capacity (D-10); the design does not depend on that.
 - **Status:** Accepted (user, 2026-10-06).
 
-### D-13 · Document bytes: in-process buffer, never in state or DB
+### D-13 · Document bytes: in-process buffer, never in state or DB *(partly superseded by D-24: originals are now kept in a document store; the buffer and "never in state" still hold)*
 - **Context:** P3's KYC `POST /documents` takes multipart bytes, processes in memory, stores only SHA-256, extracted values
   and confidences. LangGraph checkpoints every state update (and resume values), so bytes must never enter state.
 - **Decision:** the API reads bytes into a TTL buffer keyed by `(case_id, doc_ref)`; `extract` consumes them. If the process
@@ -261,6 +261,93 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
 - **Recommendation:** rating = highest severity among fired rules, **raised one level when three or more distinct rules fire**
   (capped at high). Severities: R-SAN-01 strong hit high; R-SAN-02 possible hit medium; R-JUR-01 FATF call-for-action high; R-JUR-02
   increased monitoring medium; R-OCC-01 higher-risk occupation medium; R-DOC-01 missing document medium; R-DOC-02 low-confidence or
-  malformed field medium; R-DOC-03 extraction unavailable high. The jurisdiction rules read `residence_country` and the ID document's
-  `issuing_country`, not nationality alone, so a DRC national resident in the UAE does not fire R-JUR-02 (cases 2 and 11 rely on this).
-- **Status:** Proposed; waiting for the user. The fixtures already assume it.
+  malformed field medium; R-DOC-03 extraction unavailable high. The jurisdiction rules read `residence_country` only. (Corrected in Phase 2: this entry first
+  also named the ID document's `issuing_country`, but that mirrors nationality, so a DRC national resident in the UAE would fire R-JUR-02,
+  which cases 2 and 11 must not.)
+- **Status:** Accepted (user, 2026-10-06). The fixtures already assume it.
+
+### D-20 · Branching: `main`, `qa` (from main), `feature/*` (from qa), PR-only
+- **Decision (user, 2026-10-06):** as P3. Feature PR into `qa` triggers the QA pipeline on merge; PR `qa` into `main` triggers the prod
+  pipeline on merge. The Phase 1 work was committed straight to `main`; `qa` was cut from that commit, so all three start identical.
+- **Branch protection to configure on GitHub (not done by Claude):** `qa`: block force-push and deletion only (the QA pipeline pushes a
+  bot commit with the deployed tag, as in P3); `main`: require a PR, 0 approvals, block force-push and deletion.
+- **Status:** Accepted.
+
+### D-21 · Phase 2 design choices (made while building; please review)
+- **Scorer:** keeps every listed entry whose best name or alias score reaches the raise threshold; classification and corroboration follow D-06.
+  Aliases of every quality ("Good" and "Low") are matched, and the name the KYC service read from the document is screened as well as the declared
+  name. Thresholds stay at 85 / 92: on the development set, 85 raised one false positive in 25 invented names and caught 8 of 10 variants
+  (the two misses omit a middle name); 90 gave the same recall with no false positive. Screening favours recall, so 85 was kept, and the numbers are
+  recorded in `data/reference/screening_config.yaml`. Revisit if officers see too many false positives.
+- **LLM calls happen before the approval pause:** annotation in `screen`, explanation, summary and draft in `assess`, so the interrupted node stays
+  free of side effects. A per-run circuit breaker stops calling the model after the first outage in a node.
+- **Outputs are checked, not trusted:** explanation and summary cannot name a rule that did not fire; a draft must ask for exactly the missing
+  documents and must not mention screening, risk, rules or a decision; failures fall back to templates and are audited as `llm_output_rejected`.
+- **Template wording lives with the LLM package** (`llm/facts.py`), so `rules/` and `screening/` contain nothing about LLM-produced fields; tests
+  enforce that they do not import `onboarding.llm`.
+- **The trajectory is read from the audit log:** `node_completed` rows in order, plus `approval_requested` (written by the runner, not the
+  interrupted node) as `approve`.
+- **Strict checkpoint deserialisation:** `LANGGRAPH_STRICT_MSGPACK=true` with an allowlist of exactly the classes in `onboarding.models`.
+- **Status:** Proposed; waiting for the user.
+
+### D-22 · Phase 3 design choices (made while building; please review)
+- **One pause, one answer.** A pause has a deterministic id (`<case>:a<round>` for the officer, `<case>:d<round>` for documents). The service refuses
+  a decision or upload that answers any other pause. The order is: check, audit `decision_received` (if this fails nothing is applied), claim the pause
+  with a compare-and-set on the `cases` row and store the claimed decision, then resume the graph from the checkpoint. A crash after the claim is
+  finished by `recover()` at the next start (from any replica). This reuses MIA D-50 and D-28 but is simpler than MIA (no queue).
+- **The guard is stricter than the brief:** approval needs a disposition on every hit, no confirmed match, available extraction and complete documents,
+  and a note of at least 10 characters when it goes against the recommendation, above low risk, or after clearing a hit (the override rationale a
+  reviewer wants). Rejecting a case with a strong hit also needs a disposition. The `approve` node re-checks as a second line of defence.
+- **`cases` table as a projection** (status, who submitted, current pause, a claimed decision) next to LangGraph's checkpoints; it makes listing cheap and
+  the claim atomic. It holds the synthetic applicant name only. `final_json` keeps the outcome after a retention purge.
+- **Submitters see status only.** Showing a client their screening result or risk rating could tip them off, so the API and UI hide them from the
+  `submitter` role. Officers see everything. Nobody decides a case they submitted.
+- **Database roles:** `owner` migrates; `app` has SELECT/INSERT on `audit_log` (and nothing else on it), SELECT/INSERT/UPDATE on `cases`, and
+  SELECT/INSERT/UPDATE/DELETE on LangGraph's tables so the retention purge works. Tests prove each of these.
+- **Fixture and model changes made because of the guard and the edge:** the `high_risk_occupation` case now carries an approval note; the applicant model rejects
+  implausible birth dates at the edge (so `intake`'s own date check is a second line).
+- **Errors carry no applicant data** into `cases.last_error`, the audit log or logs: the exception class only.
+- **Langfuse:** trace id derived from the case id; a root span per run (`case:start`, `case:resume`, `case:recover`), a span per node, tool spans for the
+  KYC and bank calls, a generation per LLM call linked to the prompt version when the prompt came from Langfuse. Prompts: label `production` or `staging`
+  (`PROMPT_LABEL`), SDK cache 60 s, local copy when Langfuse is unreachable. `scripts/sync_prompts.py` creates a new prompt version only when the text differs.
+- **Dev tokens exist only in `dev`:** qa and prod refuse to start without `ONBOARDING_TOKENS` and `SESSION_SECRET`, and prod refuses the fake LLM.
+- **Status:** Proposed; waiting for the user.
+
+### D-23 · Phase 4 design choices (made while building; please review)
+- **Kustomize base and overlays** (`k8s/base`, `k8s/qa`, `k8s/prod`) instead of P3's two copied directories: one definition of Postgres, the API, the mock
+  bank and the network policies; the overlays set the environment name, the KYC URL, the ExternalSecret paths, the Ingress host, and (prod) the volume class and size.
+  The pipeline reads and writes `newName`/`newTag` in the overlay exactly as P3's does. Patches match env vars by name, not by position.
+- **Migrations run in an init container** of the API pod (owner role, idempotent, advisory-locked), so a deploy never needs a separate job and the running app keeps
+  only the restricted role. Passwords reach connection URLs through Kubernetes `$(VAR)` expansion; they are generated hex strings (no characters that need encoding).
+- **Postgres in the cluster is a single-pod StatefulSet** with the same hardening as the other pods (non-root uid 999, read-only root, no capabilities), an init script
+  from a ConfigMap that creates the roles and databases from secret values, `ebs-sc` in qa and `ebs-sc-retain` (10Gi) in prod.
+- **The LLM backend in the cluster is Bedrock in both environments**, with `LLM_RETRY_ATTEMPTS=2` so that, while P3's account has zero Bedrock quota, a case takes
+  seconds (not a minute) before falling back to templates. Prod refuses the fake backend. Switching the model off is `LLM_ENABLED=false`.
+- **Three Secrets Manager secrets per environment** (`pg-secret`, `app-secret`, `langfuse-keys`); the smoke-test token is a submitter-only token in `app-secret`, read
+  by the pipeline with the deploy role (the namespace-scoped Edit policy allows reading secrets in that namespace only).
+- **Separate states** like P3's (`platform`, `envs/qa`, `envs/prod`), each with a partial S3 backend config and `use_lockfile`, so qa and prod can be applied or destroyed
+  on their own.
+- **Workflow changes from P3's:** `ci.yml` is replaced by `qa-cicd.yml` (which also runs on PRs into `main`, a small extension), tests and lint use uv with a Postgres
+  service, the offline fixture run is a CI step, SonarCloud is off until `SONAR_ENABLED=true`, and a smoke test follows the QA deploy. Scans stay report-only as in P3.
+- **Status:** Proposed; waiting for the user.
+
+### D-24 · Original documents are retained in a restricted document store (user decision, 2026-10-07; replaces "hash only")
+- **Context:** the first QA use showed that an officer cannot open what the applicant submitted. A reviewer has to see the documents before approving,
+  and when extraction fails (as it does while P3's Bedrock quota is zero) a person must verify by eye. D-13 and the brief's hard rule ("documents are not
+  persisted, hash only, as P3") made that impossible. The user chose option 1: an audited document store.
+- **Decision:** originals go to a private, encrypted store: S3 in qa/prod (one bucket per environment, public access blocked, TLS-only policy, AES-256
+  server-side encryption, lifecycle expiry as a backstop), a local folder in development. `DOCUMENT_STORE` is `s3` in qa and prod (enforced at startup).
+- **What did not change:** bytes never enter the case state, the checkpoint, the audit log, logs, traces or prompts; the in-memory buffer still feeds `extract`;
+  the applicant's file name is never kept; extracted values are still purged with the checkpoint.
+- **Access:** officers only (a submitter gets 403); through `GET /cases/{id}/documents/{doc_ref}` or the officer page, never a public or pre-signed URL;
+  the `document_viewed` audit row is written first (no audit, no document); the stored bytes are re-hashed against the SHA-256 recorded at upload and withheld
+  with `document_integrity_failed` on a mismatch; a document is only reachable through its own case's state.
+- **Safe display:** type sniffed from the bytes; png, jpeg, webp, gif, pdf and plain text are shown inline, everything else is a download; `nosniff`, `no-store`,
+  `X-Frame-Options: DENY` and a restrictive CSP (`sandbox` except for PDFs, which a sandbox would break) on every document response.
+- **Retention:** deleted with the case's checkpoints by `purge_checkpoints` (default 30 days after the case closes; the purge keeps the checkpoint if the delete fails, so
+  it retries), and by the bucket lifecycle (default 90 days). **Degrade:** if the store is down at upload, the case continues with `documents_not_retained` and the
+  officer is told; it is not blocked (a stricter bank would refuse the upload).
+- **Consequences:** the hard rule and README privacy text changed; Terraform adds a bucket, its policies and S3 permissions on the API role per environment (the API role
+  is now always created, and the existing one is kept with a `moved` block); the pipeline fills the bucket name in at deploy time because it contains the account id; CONTROLS
+  gets C-18. Not decided here: a UAE-region bucket, KMS customer keys, malware scanning and legal-hold rules for real use.
+- **Status:** Accepted (user, 2026-10-07).
