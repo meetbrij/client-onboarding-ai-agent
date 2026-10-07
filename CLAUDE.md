@@ -55,7 +55,7 @@ docker compose down -v                       # also needed after changing docker
 uv run python scripts/load_sanctions.py      # rebuild index from data/sanctions snapshot (never run in prod)
 uv run pytest                                # offline; set MOCK_BANK_TEST_DATABASE_URL (compose postgres) to include the Postgres race test
 uv run python scripts/make_fixtures.py       # regenerate evals/cases/*.yaml (committed; tests check them against the snapshot)
-uv run ruff check . && uv run mypy app tests
+make check                                   # ruff check, ruff format --check, mypy and the fixture run: what CI runs. Run it BEFORE every push
 # evals are deferred until P3's KYC service is live (D-15, Phase 3b):
 uv run python -m evals.run --live            # live KYC + Bedrock + Langfuse; writes evals/results/<date>.json
 uv run python -m onboarding.audit verify     # verify_audit_chain against $DATABASE_URL: exit 1 and the first broken row on a break
@@ -170,6 +170,8 @@ Until Phase 4 the only workflow is `ci.yml` (Gitleaks, lint, types, tests), whic
 - **Documents are untrusted bytes.** The type is sniffed from the bytes (`sniff_content_type`), only png/jpeg/webp/gif/pdf/text are shown inline,
   everything else downloads, `nosniff` and a restrictive CSP are always sent, and the SHA-256 recorded at upload is checked on every read. Keep
   those rules in `api/document_response.py` and `service.get_document`; ids go through `check_ids` (no path characters).
+- **Run `make check` after your last edit, not before it.** CI fails on `ruff format --check`; a test appended after the last format run broke the QA
+  pipeline's lint job once and blocked a deploy.
 - LangGraph strict msgpack: keep state to pydantic models/primitives; set `LANGGRAPH_STRICT_MSGPACK=true` (MIA D-24).
 - **The audit log refuses personal-data keys** (`dob`, `id_number`, `value`, `address`...) and long strings: name payload keys accordingly
   (`dob_agreement`, not `dob`). Rule `inputs` appear in audit rows, so keep them to identifiers, countries and counts.
