@@ -75,21 +75,77 @@ def view(c, case_id):
 def test_every_page_carries_the_strict_csp_and_no_script_is_allowed(client):
     r = client.get("/ui/login")
     assert r.headers["content-security-policy"] == CSP
-    assert "script-src" not in CSP and "default-src 'none'" in CSP and "unsafe" not in CSP
+    assert "script-src 'self'" in CSP and "default-src 'none'" in CSP and "unsafe" not in CSP
     assert "frame-ancestors 'none'" in CSP and "form-action 'self'" in CSP
     assert r.headers["x-frame-options"] == "DENY" and r.headers["x-content-type-options"] == "nosniff"
     assert r.headers["cache-control"] == "no-store"
 
 
-def test_templates_and_css_have_no_script_inline_style_handlers_or_external_resources():
+def test_templates_and_css_have_no_inline_script_style_handlers_or_external_resources():
     for path in [*TEMPLATES.glob("*.html"), *STATIC.glob("*")]:
         text = path.read_text()
-        assert "<script" not in text.lower(), path
+        for tag in re.findall(r"<script\b[^>]*>", text, re.IGNORECASE):
+            # the only script allowed is the same-origin file; never inline code
+            assert re.fullmatch(r'<script src="/ui/static/ui\.js" defer>', tag), (path, tag)
+        assert not re.search(r"<script[^>]*>\s*[^<\s]", text, re.IGNORECASE), (path, "inline script")
         assert not re.search(r"\sstyle\s*=", text), path
         assert not re.search(r"\son[a-z]+\s*=", text), path
         assert "|safe" not in text and "autoescape" not in text and "Markup" not in text, path
         assert not re.search(r"https?://", text), path
         assert "@import" not in text and "url(" not in text, path
+
+
+def test_the_script_is_small_and_does_not_use_dangerous_apis():
+    js = (STATIC / "ui.js").read_text()
+    for banned in (
+        "eval(",
+        "new Function",
+        "innerHTML",
+        "outerHTML",
+        "insertAdjacentHTML",
+        "document.write",
+        "fetch(",
+        "XMLHttpRequest",
+        "localStorage",
+        "sessionStorage",
+        "document.cookie",
+        "import(",
+        "WebSocket",
+    ):
+        assert banned not in js, banned
+    assert len(js.splitlines()) < 100
+
+
+def test_the_script_is_served_with_the_csp(client):
+    r = client.get("/ui/static/ui.js")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("application/javascript")
+    assert r.headers["content-security-policy"] == CSP and "data-busy" in r.text
+
+
+def test_slow_forms_are_marked_busy_and_pages_load_the_script(env):
+    cid = submit_via_api(env, "missing_poa")
+    sub = as_user(env, "dev-submitter-token")
+    off = as_user(env, "dev-officer-token")
+    new = sub.get("/ui/new").text
+    assert 'data-busy="Submitting case' in new and 'class="busy-note"' in new and "hidden" in new
+    assert '<script src="/ui/static/ui.js" defer></script>' in new
+    assert 'data-busy="Recording decision' in view(off, cid).text
+    # every form that posts to a slow action is marked; login and logout are quick and are not
+    for html in (new, view(off, cid).text):
+        for form in re.findall(r"<form[^>]*>", html):
+            if "/ui/new" in form or "/decision" in form or "/documents" in form:
+                assert "data-busy=" in form, form
+            if "/ui/logout" in form or "/ui/login" in form:
+                assert "data-busy" not in form
+    off.close(), sub.close()
+
+
+def test_pages_still_work_without_the_script(env):
+    """The script only adds a busy state: the forms are ordinary forms with ordinary submit buttons."""
+    sub = as_user(env, "dev-submitter-token")
+    html = sub.get("/ui/new").text
+    assert '<button type="submit">Submit case</button>' in html and 'method="post"' in html
+    sub.close()
 
 
 def test_the_app_never_disables_jinja_autoescape():

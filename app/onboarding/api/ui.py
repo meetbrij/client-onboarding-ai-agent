@@ -1,8 +1,9 @@
-"""Officer and submitter pages: server-rendered, no JavaScript, strict Content Security Policy.
+"""Officer and submitter pages: server-rendered, one small same-origin script, strict Content Security Policy.
 
 Design rules
 - Every value is rendered by Jinja2 with autoescaping on; nothing is marked safe.
-- The CSP allows only same-origin stylesheets and same-origin form posts: no scripts, no inline styles, no frames.
+- The CSP allows only same-origin scripts, stylesheets and form posts: no inline script or style, no eval, no frames. The one script
+  (static/ui.js) only shows a busy state on slow forms and stops a second submit; every page works without it.
 - Sessions are a signed, HttpOnly, SameSite=Strict cookie. Every state-changing form carries a CSRF token.
 - Submitters never see screening results or the risk assessment (that could tip off an applicant); officers see all of it.
 - The AI-drafted text on the page is always labelled as advisory, and the rule outputs sit next to it.
@@ -45,7 +46,7 @@ HERE = Path(__file__).parent
 COOKIE = "onb_session"
 SESSION_SECONDS = 8 * 3600
 CSP = (
-    "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; "
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; "
     "base-uri 'none'; frame-ancestors 'none'"
 )
 UI_HEADERS = {
@@ -127,6 +128,12 @@ def build_ui_router(app: FastAPI, tokens: TokenStore, cfg: Settings) -> APIRoute
     @router.get("/static/ui.css")
     def stylesheet() -> FileResponse:
         resp = FileResponse(HERE / "static" / "ui.css", media_type="text/css")
+        resp.headers.update({**UI_HEADERS, "Cache-Control": "public, max-age=300"})
+        return resp
+
+    @router.get("/static/ui.js")
+    def script() -> FileResponse:
+        resp = FileResponse(HERE / "static" / "ui.js", media_type="application/javascript")
         resp.headers.update({**UI_HEADERS, "Cache-Control": "public, max-age=300"})
         return resp
 
