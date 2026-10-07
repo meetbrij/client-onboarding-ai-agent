@@ -71,7 +71,8 @@ Two services built into **one container image**, run as two Deployments with dif
 
 **Privacy by design**
 - Everything is **synthetic**: no real ID numbers, no real people as applicants, every fixture marked `SPECIMEN`. Sanctions-hit test cases use synthetic applicants whose names are deliberate fuzzy variants of public-list entries.
-- Uploaded documents are never stored. Only a SHA-256 hash is kept, as in P3. Extracted field values live in the case checkpoint (needed to screen and to show the officer) and are purged for finished cases on a retention schedule.
+- **Original documents are kept, because an officer must be able to look at them** (and must when extraction fails). They go to a private, encrypted S3 bucket (a local folder in development), never into the case state, the checkpoint, logs, traces, prompts or the audit log, and never under the applicant's file name. Only officers can open them, through the API, never by a public link; **every view is written to the audit log before any byte is returned**, and the SHA-256 recorded at upload is checked on every read. They are deleted with the case's checkpoints after the retention window, with a bucket lifecycle rule as a backstop.
+- Extracted field values live in the case checkpoint (needed to screen and to show the officer) and are purged for finished cases on the same retention schedule.
 - Logs, traces, LLM prompts and audit payloads carry no DOB, ID number or address; at most `case_id` and synthetic names.
 - The sanctions list is a dated snapshot in `data/sanctions/`, never fetched at runtime in production; every screening result records the source and snapshot date.
 

@@ -65,6 +65,8 @@ class DocumentRef(BaseModel):
     doc_type: DocType
     sha256: str
     kyc_document_id: str | None = None
+    content_type: str | None = None  # detected from the bytes, never from the client
+    stored: bool = False  # the original is in the document store (officers can open it)
 
 
 class ExtractedField(BaseModel):

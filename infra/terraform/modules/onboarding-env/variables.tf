@@ -98,6 +98,18 @@ variable "container_defaults" {
   }
 }
 
+variable "document_retention_days" {
+  description = "Backstop expiry of stored original documents in S3. The service deletes them earlier, with the case's checkpoints (CHECKPOINT_RETENTION_DAYS, default 30 days after the case closes); keep this larger."
+  type        = number
+  default     = 90
+}
+
+variable "documents_force_destroy" {
+  description = "Let `terraform destroy` delete a bucket that still holds documents (true for qa, false for prod)."
+  type        = bool
+  default     = true
+}
+
 variable "dns_zone_id" {
   description = "Route 53 hosted zone for the alias record (an existing zone, read only). Empty skips the record."
   type        = string

@@ -35,6 +35,7 @@ CLAUDE.md  README.md  docs/{PLAN,CONTROLS,DECISIONS,EVALS,MODEL_INVENTORY}.md  d
 app/onboarding/        models, decision (the guard), service (CaseService), store (cases table), locks, db (migrate/purge),
                        graph/ (nodes, routes, build), rules/, screening/, audit/, llm/, tools/ (kyc, bank, buffer),
                        api/ (main, ui, templates, static), auth, config, bootstrap, observability, langfuse_tracing
+app/onboarding/documents.py   the document store (memory, local, S3) and type sniffing
 app/mock_bank/         separate small FastAPI service (same image, different command; must not import onboarding/)
 data/sanctions/        dated snapshot + manifest (source, date, sha256); scripts/load_sanctions.py builds the index
 data/reference/        high-risk jurisdictions and occupations (dated, sourced)
@@ -103,8 +104,10 @@ audit_head: str                   # row_hash of the last audit row written for t
   with deliberate fuzzy variants of public-list names. Every fixture and generated document is marked `SPECIMEN`.
 - **Sanctions list is vendored**, dated, in `data/sanctions/`. Never fetched at runtime in prod. Every screening result
   records source + snapshot date.
-- **No PII in traces or logs** beyond `case_id` and synthetic names. Uploaded documents are never persisted (hash only,
-  as in P3). Prompts sent to the LLM and Langfuse payloads carry no DOB, ID number or address.
+- **No PII in traces or logs** beyond `case_id` and synthetic names. Prompts sent to the LLM and Langfuse payloads carry no DOB, ID number or
+  address. **Original documents are kept only in the document store** (private encrypted S3; a local folder in dev), never in state, checkpoints,
+  the audit log, logs, traces or prompts, and never under the applicant's file name (D-24, which replaced "hash only"). Only officers can open
+  them, through the API, and the view is audited before any byte is returned.
 - **Audit log is append-only, enforced in Postgres**: trigger rejects UPDATE/DELETE/TRUNCATE, the app role has INSERT/SELECT
   only, each row stores `prev_hash` + `row_hash` (SHA-256 chain), `verify_audit_chain` proves integrity.
 - **Degrade, don't fail.** KYC down: case reaches the officer flagged "extraction unavailable". LLM down: rules and screening
@@ -163,6 +166,9 @@ Until Phase 4 the only workflow is `ci.yml` (Gitleaks, lint, types, tests), whic
   `run_in_threadpool`; a blocked loop fails `/healthz`, the liveness probe restarts the pod mid-request (it did, on the first QA deploy).
   `tests/test_api_responsiveness.py` runs a real server to prove it and has a static guard. A request over the ALB's 60 s idle timeout still returns 504 to
   the browser while the case keeps processing; refresh the case page.
+- **Documents are untrusted bytes.** The type is sniffed from the bytes (`sniff_content_type`), only png/jpeg/webp/gif/pdf/text are shown inline,
+  everything else downloads, `nosniff` and a restrictive CSP are always sent, and the SHA-256 recorded at upload is checked on every read. Keep
+  those rules in `api/document_response.py` and `service.get_document`; ids go through `check_ids` (no path characters).
 - LangGraph strict msgpack: keep state to pydantic models/primitives; set `LANGGRAPH_STRICT_MSGPACK=true` (MIA D-24).
 - **The audit log refuses personal-data keys** (`dob`, `id_number`, `value`, `address`...) and long strings: name payload keys accordingly
   (`dob_agreement`, not `dob`). Rule `inputs` appear in audit rows, so keep them to identifiers, countries and counts.

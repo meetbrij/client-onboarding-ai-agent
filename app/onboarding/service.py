@@ -32,6 +32,12 @@ from onboarding.decision import (
     check_decision,
     now_iso,
 )
+from onboarding.documents import (
+    INLINE_TYPES,
+    DocumentStore,
+    DocumentStoreError,
+    sniff_content_type,
+)
 from onboarding.graph import names
 from onboarding.graph.build import build_graph
 from onboarding.graph.nodes import Deps
@@ -77,6 +83,16 @@ class UploadedDoc:
     filename: str = "document"
 
 
+@dataclass(frozen=True)
+class ViewedDocument:
+    doc_ref: str
+    doc_type: str
+    sha256: str
+    content: bytes
+    content_type: str
+    inline: bool  # the browser may show it; otherwise it is offered as a download
+
+
 @dataclass
 class CaseView:
     row: CaseRow
@@ -94,7 +110,9 @@ class CaseService:
         checkpointer: BaseCheckpointSaver[Any],
         locks: Any,
         max_info_rounds: int = 2,
+        documents: DocumentStore | None = None,
     ) -> None:
+        self.documents = documents
         self.deps = deps
         self.audit: AuditSink = deps.audit
         self.store = store
@@ -111,15 +129,57 @@ class CaseService:
     def _snapshot(self, case_id: str) -> Any:
         return self.graph.get_state(self._config(case_id))
 
-    def _stage(self, case_id: str, docs: list[UploadedDoc]) -> list[DocumentRef]:
-        refs = []
+    def _stage(self, case_id: str, docs: list[UploadedDoc], actor: str) -> tuple[list[DocumentRef], bool]:
+        """Hold each document's bytes for `extract` (in memory) and keep the original for officers (document store).
+
+        Returns the references and whether any original could not be retained. A store failure degrades the case (the
+        officer is told); it does not stop the case.
+        """
+        refs: list[DocumentRef] = []
+        retention_failed = False
         for i, d in enumerate(docs, start=1):
             ref = f"{case_id}-{uuid.uuid4().hex[:8]}-{i}"
+            digest = hashlib.sha256(d.content).hexdigest()
+            content_type = sniff_content_type(d.content)
+            stored = False
+            if self.documents is not None:
+                try:
+                    self.documents.put(case_id, ref, d.content, content_type)
+                    stored = True
+                    self._audit_quietly(
+                        case_id,
+                        "document_stored",
+                        actor,
+                        {
+                            "doc_ref": ref,
+                            "doc_type": d.doc_type,
+                            "sha256": digest,
+                            "bytes": len(d.content),
+                            "content_type": content_type,
+                        },
+                    )
+                except DocumentStoreError as exc:
+                    retention_failed = True
+                    log.error("document not retained", extra={"case_id": case_id})
+                    self._audit_quietly(
+                        case_id,
+                        "document_store_failed",
+                        actor,
+                        {"doc_ref": ref, "doc_type": d.doc_type, "reason": type(exc).__name__},
+                    )
             self.deps.buffer.put(case_id, ref, d.content)
             refs.append(
-                DocumentRef(doc_ref=ref, doc_type=d.doc_type, sha256=hashlib.sha256(d.content).hexdigest())
+                DocumentRef(
+                    doc_ref=ref, doc_type=d.doc_type, sha256=digest, content_type=content_type, stored=stored
+                )
             )
-        return refs
+        return refs, retention_failed
+
+    def _audit_quietly(self, case_id: str, event_type: str, actor: str, payload: dict[str, Any]) -> None:
+        try:
+            self.audit.append(AuditEvent(case_id, event_type, actor=actor, payload=payload))
+        except Exception:  # noqa: BLE001 - recorded in the log; the upload itself continues
+            log.exception("could not audit a document event", extra={"case_id": case_id})
 
     def _run(self, case_id: str, graph_input: Any, segment: str) -> None:
         try:
@@ -213,8 +273,7 @@ class CaseService:
         self, applicant: Applicant, docs: list[UploadedDoc], submitted_by: str, case_id: str | None = None
     ) -> CaseView:
         case_id = case_id or str(uuid.uuid4())
-        refs = self._stage(case_id, docs)
-        state = CaseState(case_id=case_id, applicant=applicant, submitted_by=submitted_by, documents=refs)
+        # The case is recorded first, so the audit log reads: created, then each document stored, then the run.
         self.audit.append(
             AuditEvent(
                 case_id,
@@ -222,6 +281,14 @@ class CaseService:
                 actor=submitted_by,
                 payload={"submitted_by": submitted_by, "documents": [d.doc_type for d in docs]},
             )
+        )
+        refs, retention_failed = self._stage(case_id, docs, submitted_by)
+        state = CaseState(
+            case_id=case_id,
+            applicant=applicant,
+            submitted_by=submitted_by,
+            documents=refs,
+            degraded=["documents_not_retained"] if retention_failed else [],
         )
         self.store.insert(case_id, submitted_by, applicant.name, state.model_dump(mode="json"))
         self._run_safely(case_id, state, "start")
@@ -281,10 +348,14 @@ class CaseService:
             raise Conflict("the case is not waiting for these documents")
         if not docs:
             raise NotAllowed(["no documents were provided"])
-        refs = self._stage(case_id, docs)
+        refs, retention_failed = self._stage(case_id, docs, actor)
         resume = DocumentsResume(
             interrupt_id=interrupt_id,
-            documents=[r.model_dump(include={"doc_ref", "doc_type", "sha256"}) for r in refs],
+            documents=[
+                r.model_dump(include={"doc_ref", "doc_type", "sha256", "content_type", "stored"})
+                for r in refs
+            ],
+            retention_failed=retention_failed,
         )
         try:
             self.audit.append(
@@ -315,8 +386,14 @@ class CaseService:
         return self.get(case_id)
 
     def _discard(self, case_id: str, refs: list[DocumentRef]) -> None:
+        """Forget documents of an upload that was refused: the bytes and the stored originals."""
         for r in refs:
             self.deps.buffer.take(case_id, r.doc_ref)
+            if self.documents is not None and r.stored:
+                try:
+                    self.documents.delete(case_id, r.doc_ref)
+                except DocumentStoreError:
+                    log.error("could not remove a refused document", extra={"case_id": case_id})
 
     def _refuse(self, case_id: str, actor: str, interrupt_id: str, reason: str) -> None:
         try:
@@ -340,6 +417,61 @@ class CaseService:
         state = CaseState.model_validate(snap.values) if snap.values else None
         pending = snap.interrupts[0].value if snap.interrupts else None
         return CaseView(row=row, state=state, pending=pending)
+
+    def get_document(self, case_id: str, doc_ref: str, actor: str) -> ViewedDocument:
+        """Return an original document for an officer. The view is audited BEFORE any byte is returned (if the audit
+        write fails, nothing is returned), and the stored bytes are checked against the hash recorded at upload."""
+        row = self.store.get(case_id)
+        if row is None:
+            raise CaseNotFound(case_id)
+        state_values = self._snapshot(case_id).values
+        ref = (
+            next((d for d in CaseState.model_validate(state_values).documents if d.doc_ref == doc_ref), None)
+            if state_values
+            else None
+        )
+        if ref is None:
+            raise CaseNotFound(
+                "document not found"
+            )  # unknown, or the case was purged under the retention policy
+        if self.documents is None or not ref.stored:
+            raise CaseNotFound("this document was not retained")
+        try:
+            stored = self.documents.get(case_id, doc_ref)
+        except DocumentStoreError as exc:
+            raise Unavailable("the document store is unavailable") from exc
+        if stored is None:
+            raise CaseNotFound("document not found")  # for instance already deleted by the retention policy
+        if hashlib.sha256(stored.content).hexdigest() != ref.sha256:
+            self._audit_quietly(
+                case_id, "document_integrity_failed", actor, {"doc_ref": doc_ref, "doc_type": ref.doc_type}
+            )
+            raise Unavailable("the stored document does not match its recorded hash and was withheld")
+        try:
+            self.audit.append(
+                AuditEvent(
+                    case_id,
+                    "document_viewed",
+                    actor=actor,
+                    payload={
+                        "doc_ref": doc_ref,
+                        "doc_type": ref.doc_type,
+                        "sha256": ref.sha256,
+                        "content_type": stored.content_type,
+                    },
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("audit write failed; document not shown", extra={"case_id": case_id})
+            raise Unavailable("the audit log is unavailable; the document was not shown") from exc
+        return ViewedDocument(
+            doc_ref,
+            ref.doc_type,
+            ref.sha256,
+            stored.content,
+            stored.content_type,
+            stored.content_type in INLINE_TYPES,
+        )
 
     def list_cases(self, submitted_by: str | None = None) -> list[CaseRow]:
         return self.store.list_cases(submitted_by)
@@ -394,9 +526,23 @@ class CaseService:
                 continue
             if not hasattr(self.checkpointer, "delete_thread"):
                 break
+            removed = 0
+            if self.documents is not None:
+                try:
+                    removed = self.documents.delete_case(case_id)
+                except DocumentStoreError:
+                    log.error(
+                        "could not purge documents; keeping the checkpoint so the purge can retry",
+                        extra={"case_id": case_id},
+                    )
+                    continue
             self.checkpointer.delete_thread(case_id)
             self.audit.append(
-                AuditEvent(case_id, "checkpoint_purged", payload={"older_than_days": older_than_days})
+                AuditEvent(
+                    case_id,
+                    "checkpoint_purged",
+                    payload={"older_than_days": older_than_days, "documents_deleted": removed},
+                )
             )
             purged += 1
         return purged

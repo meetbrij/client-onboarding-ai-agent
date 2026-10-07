@@ -62,7 +62,8 @@ module "onboarding_env" {
   ecr_actions        = ["ecr:BatchGetImage", "ecr:PutImage"]
 
   bedrock_inference_profile_ids = var.bedrock_inference_profile_ids
-  secret_recovery_window_days   = 7 # a deleted prod secret stays recoverable for a week
+  documents_force_destroy       = false # prod documents are never deleted by a stray destroy
+  secret_recovery_window_days   = 7     # a deleted prod secret stays recoverable for a week
 
   dns_zone_id       = data.aws_route53_zone.this.zone_id
   hostname          = var.hostname

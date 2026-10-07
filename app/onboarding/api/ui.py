@@ -26,6 +26,7 @@ from starlette.datastructures import (
     UploadFile,  # the base class: form parsing returns this, not FastAPI's subclass
 )
 
+from onboarding.api.document_response import document_response
 from onboarding.auth import Principal, TokenStore
 from onboarding.config import Settings
 from onboarding.decision import DecisionRequest
@@ -269,6 +270,24 @@ def build_ui_router(app: FastAPI, tokens: TokenStore, cfg: Settings) -> APIRoute
     def case_view(request: Request, case_id: str) -> Response:
         sess = session(request)
         return case_page(request, case_id, sess) if sess else redirect("/ui/login")
+
+    @router.get("/cases/{case_id}/documents/{doc_ref}")
+    def open_document(request: Request, case_id: str, doc_ref: str) -> Response:
+        """An original document, for officers only (the page links here). The view is audited before any byte is sent."""
+        sess = session(request)
+        if not sess:
+            return redirect("/ui/login")
+        who = who_from(sess)
+        if not who.is_officer:
+            return page(
+                request, "error.html", {"message": "Only officers can open submitted documents."}, 403, sess
+            )
+        try:
+            return document_response(service().get_document(case_id, doc_ref, who.id))
+        except CaseNotFound as exc:
+            return page(request, "error.html", {"message": f"Document not available: {exc}."}, 404, sess)
+        except Unavailable as exc:
+            return page(request, "error.html", {"message": str(exc)}, 503, sess)
 
     @router.post("/cases/{case_id}/decision")
     async def decision(request: Request, case_id: str) -> Response:

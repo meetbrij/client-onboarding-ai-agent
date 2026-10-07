@@ -113,6 +113,12 @@ spec:
                   optional: true
             - name: MOCK_BANK_URL
               value: http://onboarding-mock-bank
+            # Original documents live in a private, encrypted S3 bucket (Terraform). Officers open them through the API only,
+            # and every view is audited. The bucket name contains the AWS account id, so the pipeline fills it in at deploy time.
+            - name: DOCUMENT_STORE
+              value: s3
+            - name: DOCUMENT_BUCKET
+              value: set-by-pipeline
             # Officers, session signing and the smoke-test token. Not optional: the pod fails closed without them.
             - name: ONBOARDING_TOKENS
               valueFrom:

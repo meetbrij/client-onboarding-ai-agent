@@ -182,7 +182,7 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   environment to stay within capacity (D-10); the design does not depend on that.
 - **Status:** Accepted (user, 2026-10-06).
 
-### D-13 · Document bytes: in-process buffer, never in state or DB
+### D-13 · Document bytes: in-process buffer, never in state or DB *(partly superseded by D-24: originals are now kept in a document store; the buffer and "never in state" still hold)*
 - **Context:** P3's KYC `POST /documents` takes multipart bytes, processes in memory, stores only SHA-256, extracted values
   and confidences. LangGraph checkpoints every state update (and resume values), so bytes must never enter state.
 - **Decision:** the API reads bytes into a TTL buffer keyed by `(case_id, doc_ref)`; `extract` consumes them. If the process
@@ -330,3 +330,24 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
 - **Workflow changes from P3's:** `ci.yml` is replaced by `qa-cicd.yml` (which also runs on PRs into `main`, a small extension), tests and lint use uv with a Postgres
   service, the offline fixture run is a CI step, SonarCloud is off until `SONAR_ENABLED=true`, and a smoke test follows the QA deploy. Scans stay report-only as in P3.
 - **Status:** Proposed; waiting for the user.
+
+### D-24 · Original documents are retained in a restricted document store (user decision, 2026-10-07; replaces "hash only")
+- **Context:** the first QA use showed that an officer cannot open what the applicant submitted. A reviewer has to see the documents before approving,
+  and when extraction fails (as it does while P3's Bedrock quota is zero) a person must verify by eye. D-13 and the brief's hard rule ("documents are not
+  persisted, hash only, as P3") made that impossible. The user chose option 1: an audited document store.
+- **Decision:** originals go to a private, encrypted store: S3 in qa/prod (one bucket per environment, public access blocked, TLS-only policy, AES-256
+  server-side encryption, lifecycle expiry as a backstop), a local folder in development. `DOCUMENT_STORE` is `s3` in qa and prod (enforced at startup).
+- **What did not change:** bytes never enter the case state, the checkpoint, the audit log, logs, traces or prompts; the in-memory buffer still feeds `extract`;
+  the applicant's file name is never kept; extracted values are still purged with the checkpoint.
+- **Access:** officers only (a submitter gets 403); through `GET /cases/{id}/documents/{doc_ref}` or the officer page, never a public or pre-signed URL;
+  the `document_viewed` audit row is written first (no audit, no document); the stored bytes are re-hashed against the SHA-256 recorded at upload and withheld
+  with `document_integrity_failed` on a mismatch; a document is only reachable through its own case's state.
+- **Safe display:** type sniffed from the bytes; png, jpeg, webp, gif, pdf and plain text are shown inline, everything else is a download; `nosniff`, `no-store`,
+  `X-Frame-Options: DENY` and a restrictive CSP (`sandbox` except for PDFs, which a sandbox would break) on every document response.
+- **Retention:** deleted with the case's checkpoints by `purge_checkpoints` (default 30 days after the case closes; the purge keeps the checkpoint if the delete fails, so
+  it retries), and by the bucket lifecycle (default 90 days). **Degrade:** if the store is down at upload, the case continues with `documents_not_retained` and the
+  officer is told; it is not blocked (a stricter bank would refuse the upload).
+- **Consequences:** the hard rule and README privacy text changed; Terraform adds a bucket, its policies and S3 permissions on the API role per environment (the API role
+  is now always created, and the existing one is kept with a `moved` block); the pipeline fills the bucket name in at deploy time because it contains the account id; CONTROLS
+  gets C-18. Not decided here: a UAE-region bucket, KMS customer keys, malware scanning and legal-hold rules for real use.
+- **Status:** Accepted (user, 2026-10-07).

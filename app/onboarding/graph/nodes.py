@@ -317,11 +317,17 @@ def make_nodes(deps: Deps) -> dict[str, NodeFn]:
         kept = [
             d for d in state.documents if d.kyc_document_id or d.doc_type not in {a.doc_type for a in arrived}
         ]
+        degraded = (
+            _flags(state.degraded, "documents_not_retained", True)
+            if resume.retention_failed
+            else state.degraded
+        )
         return {
             "documents": [*kept, *arrived],
             "info_rounds": state.info_rounds + 1,
             "decision": None,
             "status": "intake",
+            "degraded": degraded,
         }
 
     # --------------------------------------------------------------- execute

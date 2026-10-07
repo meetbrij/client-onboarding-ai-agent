@@ -16,6 +16,10 @@ output "eso_role_arn" {
   value = module.onboarding_env.eso_role_arn
 }
 
+output "documents_bucket" {
+  value = module.onboarding_env.documents_bucket
+}
+
 output "api_role_arn" {
   value = module.onboarding_env.api_role_arn
 }

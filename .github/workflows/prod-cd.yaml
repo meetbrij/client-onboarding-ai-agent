@@ -147,6 +147,9 @@ jobs:
           cp -R k8s/. "$WORK/"
           OVERLAY="$WORK/prod"
           sed -i "s#newName: .*#newName: $REGISTRY/$IMAGE_NAME#; s#newTag: .*#newTag: \"$PROD_TAG\"#" "$OVERLAY/kustomization.yaml"
+          # The documents bucket name contains the account id, which is never written to the repository.
+          ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          sed -i "s#set-by-pipeline#client-onboarding-docs-$ACCOUNT-prod-$AWS_REGION#" "$WORK/base/api.yaml"
           kubectl apply -k "$OVERLAY"
 
       - name: Wait for the database, the mock bank and the API to be ready

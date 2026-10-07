@@ -274,8 +274,6 @@ locals {
 }
 
 data "aws_iam_policy_document" "api_assume" {
-  count = local.bedrock_enabled ? 1 : 0
-
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
 
@@ -299,10 +297,14 @@ data "aws_iam_policy_document" "api_assume" {
 }
 
 resource "aws_iam_role" "api" {
-  count = local.bedrock_enabled ? 1 : 0
-
   name               = "${var.cluster_name}-${local.namespace}-api"
-  assume_role_policy = data.aws_iam_policy_document.api_assume[0].json
+  assume_role_policy = data.aws_iam_policy_document.api_assume.json
+}
+
+# The role used to exist only when Bedrock was enabled (index 0); keep the existing role instead of replacing it.
+moved {
+  from = aws_iam_role.api[0]
+  to   = aws_iam_role.api
 }
 
 data "aws_iam_policy_document" "api_bedrock" {
@@ -333,7 +335,7 @@ resource "aws_iam_role_policy" "api_bedrock" {
   count = local.bedrock_enabled ? 1 : 0
 
   name   = "invoke-bedrock-${var.env_name}"
-  role   = aws_iam_role.api[0].id
+  role   = aws_iam_role.api.id
   policy = data.aws_iam_policy_document.api_bedrock[0].json
 }
 
@@ -343,10 +345,117 @@ resource "kubernetes_service_account_v1" "api" {
     name      = "onboarding-api"
     namespace = kubernetes_namespace_v1.this.metadata[0].name
 
-    annotations = local.bedrock_enabled ? {
-      "eks.amazonaws.com/role-arn" = aws_iam_role.api[0].arn
-    } : {}
+    annotations = {
+      "eks.amazonaws.com/role-arn" = aws_iam_role.api.arn
+    }
   }
+}
+
+# ------------------------------------------------- original documents (S3)
+
+# Officers must be able to open what an applicant submitted (DECISIONS D-24). The bucket is private, encrypted, TLS-only
+# and has no public access. Only the API's role can use it, and the API only ever hands a document to an officer, after
+# writing an audit record. Objects expire after `document_retention_days` as a backstop to the service's own purge.
+locals {
+  documents_bucket = "client-onboarding-docs-${data.aws_caller_identity.current.account_id}-${var.env_name}-${data.aws_region.current.region}"
+}
+
+resource "aws_s3_bucket" "documents" {
+  bucket        = local.documents_bucket
+  force_destroy = var.documents_force_destroy
+}
+
+resource "aws_s3_bucket_public_access_block" "documents" {
+  bucket                  = aws_s3_bucket.documents.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_ownership_controls" "documents" {
+  bucket = aws_s3_bucket.documents.id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "documents" {
+  bucket = aws_s3_bucket.documents.id
+
+  rule {
+    bucket_key_enabled = true
+
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "documents" {
+  bucket = aws_s3_bucket.documents.id
+
+  rule {
+    id     = "expire-documents"
+    status = "Enabled"
+
+    filter {}
+
+    expiration {
+      days = var.document_retention_days
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 1
+    }
+  }
+}
+
+data "aws_iam_policy_document" "documents_bucket" {
+  statement {
+    sid       = "DenyInsecureTransport"
+    effect    = "Deny"
+    actions   = ["s3:*"]
+    resources = [aws_s3_bucket.documents.arn, "${aws_s3_bucket.documents.arn}/*"]
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "documents" {
+  bucket     = aws_s3_bucket.documents.id
+  policy     = data.aws_iam_policy_document.documents_bucket.json
+  depends_on = [aws_s3_bucket_public_access_block.documents]
+}
+
+data "aws_iam_policy_document" "api_documents" {
+  statement {
+    sid       = "ReadWriteDocuments"
+    actions   = ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"]
+    resources = ["${aws_s3_bucket.documents.arn}/*"]
+  }
+
+  statement {
+    sid       = "ListForPurge"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.documents.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "api_documents" {
+  name   = "documents-${var.env_name}"
+  role   = aws_iam_role.api.id
+  policy = data.aws_iam_policy_document.api_documents.json
 }
 
 # ------------------------------------------------------------------- DNS alias

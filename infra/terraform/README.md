@@ -13,7 +13,7 @@ needs your credentials, so it is yours to run.
 | Stack | Resources |
 |---|---|
 | `platform/` | ECR repository `client-onboarding` (immutable tags, scan on push, lifecycle policy); ACM certificate for `qa-proj4-onboarding.<zone>` and `proj4-onboarding.<zone>` with DNS validation records in the existing zone |
-| `envs/qa/`, `envs/prod/` (module `onboarding-env`) | Namespace `onboarding-qa` / `onboarding-prod` with quota and limit range; three Secrets Manager secret shells (`<env>/onboarding/pg-secret`, `app-secret`, `langfuse-keys`); External Secrets IAM role and `eso` service account; Bedrock IAM role and `onboarding-api` service account (IRSA, only the listed inference profile and its underlying models); GitHub Actions deploy role (qa: `ref:refs/heads/qa`, prod: `environment:prod`) with an EKS access entry scoped to the namespace; optional Route 53 alias to the shared ALB |
+| `envs/qa/`, `envs/prod/` (module `onboarding-env`) | S3 bucket `client-onboarding-docs-<account>-<env>-<region>` for the original documents (private, AES-256, TLS-only, lifecycle expiry; the API role can read, write and delete objects in it); Namespace `onboarding-qa` / `onboarding-prod` with quota and limit range; three Secrets Manager secret shells (`<env>/onboarding/pg-secret`, `app-secret`, `langfuse-keys`); External Secrets IAM role and `eso` service account; Bedrock IAM role and `onboarding-api` service account (IRSA, only the listed inference profile and its underlying models); GitHub Actions deploy role (qa: `ref:refs/heads/qa`, prod: `environment:prod`) with an EKS access entry scoped to the namespace; optional Route 53 alias to the shared ALB |
 
 What it reads and does not touch: the cluster `devsecops-eks`, its OIDC provider and the GitHub OIDC provider, the Route 53 hosted
 zone, the External Secrets and AWS Load Balancer controllers, the `ebs-sc` and `ebs-sc-retain` StorageClasses.
@@ -95,3 +95,10 @@ it gone. Secrets Manager secrets in prod stay recoverable for 7 days.
 
 Nothing in this stack changes P3's quotas, nodes or ACM certificate. If the cluster is too small for both projects, the fix (a larger node
 group) is a change to P3's platform stack.
+
+## Updating an existing environment for the document store (D-24)
+
+Re-apply `envs/qa` (and later `envs/prod`) from this branch. The plan should **add** the S3 bucket and its policies and the `documents-<env>` role policy, and should
+**move** (not replace) the API IAM role: a `moved` block turns `aws_iam_role.api[0]` into `aws_iam_role.api`. If the plan wants to destroy and recreate the API role, stop and tell me.
+The pods get `DOCUMENT_STORE=s3` and the bucket name from the pipeline on the next deploy; until the bucket exists the API refuses to start (qa and prod require `DOCUMENT_STORE=s3`),
+so apply Terraform **before** merging the code.

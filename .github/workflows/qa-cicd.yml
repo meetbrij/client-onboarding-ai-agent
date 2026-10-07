@@ -460,6 +460,9 @@ jobs:
           # the overlay refers to ../base, so the whole k8s tree is copied; only the overlay is edited and applied
           OVERLAY="$WORK/qa"
           sed -i "s#newName: .*#newName: $REGISTRY/$IMAGE_NAME#; s#newTag: .*#newTag: \"$TAG\"#" "$OVERLAY/kustomization.yaml"
+          # The documents bucket name contains the account id, which is never written to the repository.
+          ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          sed -i "s#set-by-pipeline#client-onboarding-docs-$ACCOUNT-qa-$AWS_REGION#" "$WORK/base/api.yaml"
           kubectl apply -k "$OVERLAY"
 
       # On the very first deploy the pods wait for the Secrets Manager values (infra/terraform/README.md, step 4).

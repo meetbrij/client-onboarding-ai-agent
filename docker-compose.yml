@@ -70,6 +70,10 @@ services:
       KYC_BASE_URL: http://fake-kyc:8002
       MOCK_BANK_URL: http://mock-bank:8001
       LLM_BACKEND: fake
+      DOCUMENT_STORE: local
+      DOCUMENT_DIR: /data/documents
+    volumes:
+      - docs:/data/documents
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -87,3 +91,4 @@ services:
 
 volumes:
   pgdata:
+  docs:
