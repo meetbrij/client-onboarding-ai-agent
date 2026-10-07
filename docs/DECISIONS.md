@@ -312,3 +312,21 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   (`PROMPT_LABEL`), SDK cache 60 s, local copy when Langfuse is unreachable. `scripts/sync_prompts.py` creates a new prompt version only when the text differs.
 - **Dev tokens exist only in `dev`:** qa and prod refuse to start without `ONBOARDING_TOKENS` and `SESSION_SECRET`, and prod refuses the fake LLM.
 - **Status:** Proposed; waiting for the user.
+
+### D-23 · Phase 4 design choices (made while building; please review)
+- **Kustomize base and overlays** (`k8s/base`, `k8s/qa`, `k8s/prod`) instead of P3's two copied directories: one definition of Postgres, the API, the mock
+  bank and the network policies; the overlays set the environment name, the KYC URL, the ExternalSecret paths, the Ingress host, and (prod) the volume class and size.
+  The pipeline reads and writes `newName`/`newTag` in the overlay exactly as P3's does. Patches match env vars by name, not by position.
+- **Migrations run in an init container** of the API pod (owner role, idempotent, advisory-locked), so a deploy never needs a separate job and the running app keeps
+  only the restricted role. Passwords reach connection URLs through Kubernetes `$(VAR)` expansion; they are generated hex strings (no characters that need encoding).
+- **Postgres in the cluster is a single-pod StatefulSet** with the same hardening as the other pods (non-root uid 999, read-only root, no capabilities), an init script
+  from a ConfigMap that creates the roles and databases from secret values, `ebs-sc` in qa and `ebs-sc-retain` (10Gi) in prod.
+- **The LLM backend in the cluster is Bedrock in both environments**, with `LLM_RETRY_ATTEMPTS=2` so that, while P3's account has zero Bedrock quota, a case takes
+  seconds (not a minute) before falling back to templates. Prod refuses the fake backend. Switching the model off is `LLM_ENABLED=false`.
+- **Three Secrets Manager secrets per environment** (`pg-secret`, `app-secret`, `langfuse-keys`); the smoke-test token is a submitter-only token in `app-secret`, read
+  by the pipeline with the deploy role (the namespace-scoped Edit policy allows reading secrets in that namespace only).
+- **Separate states** like P3's (`platform`, `envs/qa`, `envs/prod`), each with a partial S3 backend config and `use_lockfile`, so qa and prod can be applied or destroyed
+  on their own.
+- **Workflow changes from P3's:** `ci.yml` is replaced by `qa-cicd.yml` (which also runs on PRs into `main`, a small extension), tests and lint use uv with a Postgres
+  service, the offline fixture run is a CI step, SonarCloud is off until `SONAR_ENABLED=true`, and a smoke test follows the QA deploy. Scans stay report-only as in P3.
+- **Status:** Proposed; waiting for the user.

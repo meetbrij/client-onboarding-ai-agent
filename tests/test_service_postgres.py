@@ -238,3 +238,23 @@ def test_the_db_cli_requires_its_settings(monkeypatch, capsys):
     monkeypatch.delenv("OWNER_DATABASE_URL", raising=False)
     monkeypatch.delenv("APP_DB_ROLE", raising=False)
     assert db.main(["migrate"]) == 2
+
+
+def test_concurrent_migrations_serialise_instead_of_deadlocking(scratch_db):
+    """Several API pods start together, each running `migrate` in an init container."""
+    owner_url = scratch_db.owner.url.render_as_string(hide_password=False)
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            db.migrate(owner_url, scratch_db.app_role)
+        except BaseException as exc:  # noqa: BLE001 - collected and asserted below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run) for _ in range(4)]
+    [t.start() for t in threads]
+    [t.join(timeout=90) for t in threads]
+    assert not any(t.is_alive() for t in threads) and errors == []
+    app = create_engine(scratch_db.app_url)
+    assert PostgresAuditLog(app).verify().ok
+    app.dispose()

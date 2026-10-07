@@ -32,7 +32,7 @@ def build_llm(s: Settings) -> LlmClient | None:
     if not s.llm_enabled:
         return None
     if s.llm_backend == "bedrock":
-        return BedrockLlm(s.bedrock_model_id, s.aws_region)
+        return BedrockLlm(s.bedrock_model_id, s.aws_region, max_attempts=s.llm_retry_attempts)
     return FakeLlm()
 
 

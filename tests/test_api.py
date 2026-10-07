@@ -352,3 +352,10 @@ def test_a_failed_run_stores_only_the_error_class_and_logs_no_personal_data(env,
     assert case.applicant.dob not in out and "SPEC-ID" not in out
     rows = [x for x in env.audit.rows() if x.event_type == "run_failed"]
     assert rows and rows[0].payload == {"error": "RuntimeError"}
+
+
+def test_llm_retry_attempts_are_configurable_and_validated():
+    assert Settings.from_env({"LLM_RETRY_ATTEMPTS": "2"}).llm_retry_attempts == 2
+    assert Settings.from_env({}).llm_retry_attempts == 5
+    with pytest.raises(ConfigError, match="LLM_RETRY_ATTEMPTS"):
+        Settings.from_env({"LLM_RETRY_ATTEMPTS": "0"})

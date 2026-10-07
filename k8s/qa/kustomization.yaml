@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: onboarding-qa
+resources:
+  - ../base
+  - external-secrets.yaml
+  - ingress.yaml
+patches:
+  # Strategic-merge patches match env vars by name, so reordering the base manifest cannot break them.
+  - target:
+      kind: Deployment
+      name: onboarding-api
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: onboarding-api
+      spec:
+        template:
+          spec:
+            containers:
+              - name: api
+                env:
+                  - name: ENVIRONMENT
+                    value: qa
+                  - name: KYC_BASE_URL
+                    value: http://nodejs-service.qa.svc.cluster.local
+# The registry host and tag are set at deploy time:
+#   sed on newName and newTag in a temporary copy, so no account ID is stored in Git.
+# The default below only renders; it is not deployable. The QA pipeline commits the deployed SHA here.
+images:
+  - name: onboarding
+    newName: client-onboarding
+    newTag: "unset"

@@ -1,0 +1,3 @@
+# Copy to terraform.tfvars (gitignored).
+hostname = "proj4-onboarding.bolarbrijesh.com"
+# create_dns_record = true   # after the first deploy, once the shared ALB serves this host

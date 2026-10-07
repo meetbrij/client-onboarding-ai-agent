@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -31,6 +32,8 @@ from onboarding.graph.serde import checkpoint_serde
 from onboarding.store import CaseStore
 
 CHECKPOINT_SCHEMA = "langgraph"
+MIGRATE_LOCK_KEY = 7_315_492_002  # advisory lock id: serialises concurrent `migrate` runs
+MIGRATE_LOCK_WAIT_S = 300.0
 
 
 def libpq_conninfo(database_url: str) -> str:
@@ -71,6 +74,26 @@ def migrate(owner_url: str, app_role: str) -> None:
     if not app_role.replace("_", "").isalnum():
         raise ValueError("app_role must be a plain identifier")
     engine: Engine = create_engine(owner_url)
+    # One migration at a time (several replicas start together): a session-level advisory lock around everything.
+    # Two traps, both found by running it: the lock connection must be AUTOCOMMIT (an open transaction blocks
+    # LangGraph's CREATE INDEX CONCURRENTLY), and waiters must poll with pg_try_advisory_lock (a statement that
+    # is blocked inside pg_advisory_lock is itself a running transaction that CREATE INDEX CONCURRENTLY waits for).
+    lock = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+    deadline = time.monotonic() + MIGRATE_LOCK_WAIT_S
+    while not lock.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": MIGRATE_LOCK_KEY}).scalar():
+        if time.monotonic() > deadline:
+            lock.close()
+            raise TimeoutError("another migration has held the lock for too long")
+        time.sleep(1.0)
+    try:
+        _migrate_locked(engine, owner_url, app_role)
+    finally:
+        lock.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": MIGRATE_LOCK_KEY})
+        lock.close()
+    engine.dispose()
+
+
+def _migrate_locked(engine: Engine, owner_url: str, app_role: str) -> None:
     with engine.begin() as c:
         c.execute(text(f"CREATE SCHEMA IF NOT EXISTS {CHECKPOINT_SCHEMA}"))
     with postgres_checkpointer(owner_url, setup=True):
@@ -85,7 +108,6 @@ def migrate(owner_url: str, app_role: str) -> None:
             )
         )
         c.execute(text(f'GRANT SELECT, INSERT, UPDATE ON cases TO "{app_role}"'))
-    engine.dispose()
 
 
 def main(argv: list[str] | None = None) -> int:

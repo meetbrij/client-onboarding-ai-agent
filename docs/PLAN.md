@@ -117,6 +117,7 @@ harness, metrics, LLM-judge, Langfuse dataset and run, first committed `evals/re
 exits 0 in CI; Langfuse run name and trace ids in the file resolve. Until then, the README makes no eval claims.
 
 ## Phase 4: images, manifests, pipeline, cluster
+**Status: written and validated locally on `feature/onb-004-deploy-eks`; NOT deployed (applying Terraform and running the pipelines need your AWS credentials, GitHub settings and secret values). Results and the manual steps are at the end of this section.**
 Deliverables: one image, two Deployments (`onboarding-api`, `onboarding-mock-bank`) selected by `command:` (D-11); Postgres StatefulSet per env; `k8s/{qa,prod}` kustomize (SecretStore, ExternalSecret,
 Ingress in the shared ALB group, probes, non-root, read-only root fs, resource requests sized to the namespace quota);
 `infra/terraform` own stack (ECR repo, namespaces `onboarding-qa/prod` with quota, deploy roles trusting this repo, IRSA role
@@ -127,6 +128,28 @@ eval-gate job (deterministic); free CPU/memory on the nodes measured first.
 `kubectl rollout status`; `/healthz` is green in `qa`; a smoke script submits a synthetic case in qa, and the case reaches
 `awaiting_officer`; extraction state is reported honestly (`extraction_unavailable` while P3's Bedrock quota is zero); PR
 `qa` to `main` waits at the `prod` environment approval, retags `sha` to `prod-sha` (same digest) and rolls out.
+
+**Phase 4 results (2026-10-06), what was checked without a cluster:**
+- **Terraform:** `platform/`, `envs/qa/`, `envs/prod/` pass `terraform fmt` and `terraform validate`. Nothing was planned or applied (no AWS access from here).
+  Stack layout, apply order, the secret values to set and the GitHub settings are in `infra/terraform/README.md`.
+- **Manifests:** `kubectl kustomize k8s/qa` and `k8s/prod` render 16 resources each; kubeconform finds 12 valid, 0 invalid, and skips the 4 External Secrets
+  objects (no schema). `tests/test_manifests.py` (26 checks) asserts: namespace, non-root, read-only root filesystem, dropped capabilities, resource
+  limits, no `latest`, India-only model profile, fail-closed secrets, per-environment secret paths and storage, the shared-ALB Ingress, and the network policies.
+- **The Postgres pod, locally:** the StatefulSet's security settings (user 999, read-only root, no capabilities, `no-new-privileges`) were reproduced with
+  `docker run`; the init script created the roles and databases, `onboarding.db migrate` ran against it, and the mock-bank role connected.
+  That run found two real bugs, both fixed and tested: the init script needs the executable bit, and concurrent `migrate` runs (several pods) deadlocked on an
+  advisory lock (an open transaction and a blocked `pg_advisory_lock` both stall `CREATE INDEX CONCURRENTLY`); `migrate` now polls `pg_try_advisory_lock`
+  on an autocommit connection, and a 4-way concurrent-migration test passes on Postgres.
+- **Workflows:** `actionlint` is clean for both. They are copies of P3's with the differences listed in their headers. The scans were also run locally the
+  way the pipeline runs them, in report-only mode: Checkov k8s 260 passed and 18 failed, Terraform 96 passed and 7 failed, Dockerfile 75 passed and 0 failed;
+  Trivy on the built image: 44 HIGH and 0 CRITICAL, all Debian base-image packages (most with no fixed version), none in Python packages. See KNOWN_LIMITATIONS.
+- **Image:** builds; runs the API, the mock bank and the migration from the one image; Gitleaks clean on tracked files.
+- **Counts:** 394 tests: all pass against the compose Postgres (the 26 manifest tests need `kubectl`, present in CI runners).
+
+**You need to do, in order** (nothing below has been done): (1) apply `infra/terraform/platform`, then `envs/qa`; (2) set the three secret values for qa;
+(3) set the GitHub repository variable `AWS_ROLE_TO_ASSUME_QA` and, for prod, create the `prod` Environment with reviewers and set `AWS_ROLE_TO_ASSUME_PROD`;
+(4) merge this branch into `qa`: the first QA run builds, scans, pushes, deploys and smoke-tests; (5) after the first deploy, `create_dns_record = true` and
+re-apply the qa env stack; (6) repeat for prod and open the `qa` to `main` PR. The "Done when" checks above are met only after steps 1 to 4 succeed on the cluster.
 
 ## Phase 5: README, controls, demo
 Deliverables: README (architecture, run it, numbers from `evals/results/` only, links to controls and decisions); CONTROLS

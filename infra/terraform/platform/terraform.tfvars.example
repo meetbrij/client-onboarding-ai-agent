@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars (gitignored). Every value has a default; override only if yours differ.
+# hosted_zone_name = "bolarbrijesh.com"
+# qa_hostname      = "qa-proj4-onboarding.bolarbrijesh.com"
+# prod_hostname    = "proj4-onboarding.bolarbrijesh.com"
