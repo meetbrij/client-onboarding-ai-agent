@@ -159,6 +159,10 @@ Until Phase 4 the only workflow is `ci.yml` (Gitleaks, lint, types, tests), whic
   two keys must stay unique in each overlay's `kustomization.yaml`.
 - **A skipped job skips every job after it** in a GitHub Actions chain, even if the direct dependency succeeded. Never put a job-level `if` on an
   optional job (SonarCloud): keep the job and make its steps conditional. `tests/test_workflows.py` guards this and the Node 24 action versions.
+- **Never run the (synchronous, slow) service on the event loop.** `async def` endpoints must call `create_case`, `decide` and `add_documents` through
+  `run_in_threadpool`; a blocked loop fails `/healthz`, the liveness probe restarts the pod mid-request (it did, on the first QA deploy).
+  `tests/test_api_responsiveness.py` runs a real server to prove it and has a static guard. A request over the ALB's 60 s idle timeout still returns 504 to
+  the browser while the case keeps processing; refresh the case page.
 - LangGraph strict msgpack: keep state to pydantic models/primitives; set `LANGGRAPH_STRICT_MSGPACK=true` (MIA D-24).
 - **The audit log refuses personal-data keys** (`dob`, `id_number`, `value`, `address`...) and long strings: name payload keys accordingly
   (`dob_agreement`, not `dob`). Rule `inputs` appear in audit rows, so keep them to identifiers, countries and counts.

@@ -227,3 +227,13 @@ def test_the_init_script_is_executable_and_free_of_secrets():
     p = Path("k8s/base/postgres-init.sh")
     assert p.stat().st_mode & 0o111, "the postgres image runs init scripts that are executable"
     assert "PASSWORD '" not in p.read_text().replace(":'", "")
+
+
+def test_the_api_probes_tolerate_a_busy_process(env_docs):
+    """A restart in the middle of a request is worse than a slow probe (the first QA deploy restarted the pod mid-case)."""
+    _, docs = env_docs
+    api = next(d for d in of(docs, "Deployment") if d["metadata"]["name"] == "onboarding-api")
+    c = next(c for c in api["spec"]["template"]["spec"]["containers"] if c["name"] == "api")
+    live = c["livenessProbe"]
+    assert live["timeoutSeconds"] >= 5 and live["periodSeconds"] * live["failureThreshold"] >= 120
+    assert c["readinessProbe"]["timeoutSeconds"] >= 5

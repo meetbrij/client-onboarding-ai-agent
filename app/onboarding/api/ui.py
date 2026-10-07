@@ -21,6 +21,7 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from jinja2 import Environment, FileSystemLoader
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import (
     UploadFile,  # the base class: form parsing returns this, not FastAPI's subclass
 )
@@ -228,7 +229,9 @@ def build_ui_router(app: FastAPI, tokens: TokenStore, cfg: Settings) -> APIRoute
         except (ValidationError, ValueError) as exc:
             msg = "Check the applicant details and files." if isinstance(exc, ValidationError) else str(exc)
             return page(request, "new.html", {"error": msg, "values": values}, 422, sess)
-        view = service().create_case(applicant, docs, submitted_by=sess["id"])
+        view = await run_in_threadpool(
+            service().create_case, applicant, docs, sess["id"]
+        )  # never block the event loop
         return redirect(f"/ui/cases/{view.row.case_id}")
 
     # ---------------------------------------------------------------- one case
@@ -298,7 +301,7 @@ def build_ui_router(app: FastAPI, tokens: TokenStore, cfg: Settings) -> APIRoute
                 request, case_id, sess, "Choose an action and a disposition for each hit.", status=422
             )
         try:
-            service().decide(case_id, req, who.id)
+            await run_in_threadpool(service().decide, case_id, req, who.id)
         except NotAllowed as exc:
             return case_page(
                 request, case_id, sess, "That decision is not allowed.", exc.problems, 422, draft=draft
@@ -325,7 +328,9 @@ def build_ui_router(app: FastAPI, tokens: TokenStore, cfg: Settings) -> APIRoute
             return page(request, "error.html", {"message": "Invalid form token."}, 403, sess)
         try:
             docs = await uploads(form, cfg.doc_max_bytes)
-            service().add_documents(case_id, str(form.get("interrupt_id", "")), docs, sess["id"])
+            await run_in_threadpool(
+                service().add_documents, case_id, str(form.get("interrupt_id", "")), docs, sess["id"]
+            )
         except ValueError as exc:
             return case_page(request, case_id, sess, str(exc), status=422)
         except NotAllowed as exc:
