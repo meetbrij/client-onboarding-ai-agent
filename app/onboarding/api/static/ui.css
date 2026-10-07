@@ -46,3 +46,17 @@ pre.draft { white-space: pre-wrap; background: var(--bg); border: 1px dashed var
 dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; } dt { color: var(--muted); } dd { margin: 0; }
 code { background: var(--bg); padding: 1px 5px; border-radius: 4px; }
 @media (max-width: 600px) { main { padding: 12px; } h1 { font-size: 20px; } }
+
+/* ---- busy state for slow forms (see ui.js) ---- */
+[hidden] { display: none !important; }
+form.submitting { opacity: .75; }
+form.submitting input, form.submitting textarea, form.submitting select, form.submitting label { cursor: progress; }
+.busy-note { margin: 12px 0 0; padding: 8px 12px; border-radius: 6px; background: var(--warn-bg); color: var(--warn-fg); font-size: 14px; }
+button.loading { cursor: progress; }
+button.loading::before {
+  content: ""; display: inline-block; width: 14px; height: 14px; margin-right: 8px; vertical-align: -2px;
+  border: 2px solid rgba(255, 255, 255, .45); border-top-color: #fff; border-radius: 50%;
+  animation: onb-spin .8s linear infinite;
+}
+@keyframes onb-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { button.loading::before { animation: none; border-top-color: rgba(255, 255, 255, .45); } }

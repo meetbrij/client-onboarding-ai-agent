@@ -3,7 +3,7 @@
 {% block content %}
 <h1>New case</h1>
 {% if error %}<p class="alert error" role="alert">{{ error }}</p>{% endif %}
-<form method="post" action="/ui/new" enctype="multipart/form-data" class="card">
+<form method="post" action="/ui/new" enctype="multipart/form-data" class="card" data-busy="Submitting case…">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <label for="name">Full name</label>
   <input id="name" name="name" value="{{ values.name or '' }}" required maxlength="200">
@@ -23,5 +23,6 @@
   <input id="proof_of_address" name="proof_of_address" type="file">
   <p class="muted">Uploaded files are read once and never stored; only a hash is kept.</p>
   <button type="submit">Submit case</button>
+  <p class="busy-note" role="status" hidden>Processing the case: reading the documents, screening and assessing. This can take up to a minute. Please keep this page open and do not submit again.</p>
 </form>
 {% endblock %}

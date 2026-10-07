@@ -100,7 +100,7 @@ prompts fetched by label with cache and local fallback. (The eval harness moved 
 - **Safety:** stale, duplicate, wrong-pause, concurrent, self-submitted, guard-violating and audit-failing decisions are refused and audited with nothing
   applied; no edge reaches `execute` except from `approve`; `execute` refuses without an officer's approval; replaying the bank call returns the same
   customer. Submitters see status only. Retention purge works under the application role and leaves the audit log untouched.
-- **UI:** server-rendered, no JavaScript, strict CSP, CSRF on every form, signed HttpOnly SameSite=Strict session, escaping tested with a hostile name.
+- **UI:** server-rendered, one small same-origin script (busy state, added after the first QA use), strict CSP, CSRF on every form, signed HttpOnly SameSite=Strict session, escaping tested with a hostile name.
   Driven by hand in a real browser against the compose stack: queue, case page, guard banner, a clear-and-approve decision that created a customer.
 - **Langfuse:** with the real SDK and an in-memory exporter: one trace per case (id derived from the case id), node, tool and generation spans nested
   correctly, prompt name and version on each generation, no personal data in spans, tracing failures never break a case. Prompt fetch by label with

@@ -147,8 +147,9 @@ Until Phase 4 the only workflow is `ci.yml` (Gitleaks, lint, types, tests), whic
   blocking gates unless we flip it in our copy.
 - **Errors never carry applicant data into storage:** `cases.last_error` and the `run_failed` audit row hold the exception class only;
   logs use an allowlist of fields (`logging_setup.py`). A test injects an exception message with a DOB and checks stdout and the audit log.
-- **Submitters never see screening or risk** (tipping-off): `case_out` and the case page hide them; officers see everything. The UI has no
-  JavaScript, a strict CSP and CSRF tokens; tests ban inline script, `style=` and `|safe` in the templates.
+- **Submitters never see screening or risk** (tipping-off): `case_out` and the case page hide them; officers see everything. The UI has
+  one same-origin script (busy state only), a strict CSP (`script-src 'self'`) and CSRF tokens; tests ban inline script, `style=`, `|safe` and
+  `eval`/`innerHTML` in the UI code.
 - **FastAPI annotations:** `api/main.py` must not use `from __future__ import annotations` (it breaks `Depends` on local functions, giving a
   silent 422). Form uploads come back as Starlette's `UploadFile`, not FastAPI's subclass.
 - **Langfuse SDK keeps process-wide state:** tests share one client per module (several create/shutdown cycles hang).
