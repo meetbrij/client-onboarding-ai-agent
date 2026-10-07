@@ -151,6 +151,8 @@ eval-gate job (deterministic); free CPU/memory on the nodes measured first.
 (4) merge this branch into `qa`: the first QA run builds, scans, pushes, deploys and smoke-tests; (5) after the first deploy, `create_dns_record = true` and
 re-apply the qa env stack; (6) repeat for prod and open the `qa` to `main` PR. The "Done when" checks above are met only after steps 1 to 4 succeed on the cluster.
 
+**Phase 4 follow-ups from the first QA use:** the event loop was blocked by long requests (fixed, `feature/onb-006`); the UI has a busy state (`feature/onb-007`); officers can open the original documents (D-24, `feature/onb-008`: document store, officer-only audited access, S3 bucket and IAM in Terraform, `DOCUMENT_BUCKET` filled in by the pipeline).
+
 ## Phase 5: README, controls, demo
 Deliverables: README (architecture, run it, numbers from `evals/results/` only, links to controls and decisions); CONTROLS
 table filled with real evidence links and screenshots; `MODEL_INVENTORY.md` complete; Langfuse screenshots; 2-minute demo

@@ -97,7 +97,15 @@ def test_qa_and_prod_refuse_to_start_without_real_tokens_and_secrets():
         Settings.from_env({"ENVIRONMENT": "qa"})
     with pytest.raises(ConfigError, match="fake LLM"):
         Settings.from_env({"ENVIRONMENT": "prod", "ONBOARDING_TOKENS": "[]", "SESSION_SECRET": "x"})
-    ok = Settings.from_env({"ENVIRONMENT": "qa", "ONBOARDING_TOKENS": "[]", "SESSION_SECRET": "x"})
+    ok = Settings.from_env(
+        {
+            "ENVIRONMENT": "qa",
+            "ONBOARDING_TOKENS": "[]",
+            "SESSION_SECRET": "x",
+            "DOCUMENT_STORE": "s3",
+            "DOCUMENT_BUCKET": "b",
+        }
+    )
     assert ok.secure_cookies is True
 
 

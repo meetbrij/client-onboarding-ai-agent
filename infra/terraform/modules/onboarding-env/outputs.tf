@@ -21,5 +21,10 @@ output "api_service_account" {
 }
 
 output "api_role_arn" {
-  value = local.bedrock_enabled ? aws_iam_role.api[0].arn : null
+  value = aws_iam_role.api.arn
+}
+
+output "documents_bucket" {
+  description = "S3 bucket for the original documents (the pipeline derives the same name for DOCUMENT_BUCKET)."
+  value       = aws_s3_bucket.documents.bucket
 }

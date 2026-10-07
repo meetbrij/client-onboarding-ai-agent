@@ -29,6 +29,7 @@ dev = [
     "mypy>=1.11",
     "types-PyYAML",
     "pytest-timeout>=2.4.0",
+    "moto[s3]>=5",
 ]
 
 [build-system]

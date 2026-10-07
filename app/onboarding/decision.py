@@ -8,7 +8,7 @@ No LLM output is read here.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -42,7 +42,10 @@ class DocumentsResume(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     interrupt_id: str
-    documents: list[dict[str, str]]  # {doc_ref, doc_type, sha256}
+    documents: list[dict[str, Any]]  # {doc_ref, doc_type, sha256, content_type, stored}
+    retention_failed: bool = (
+        False  # the originals could not be stored: officers will not be able to open them
+    )
 
 
 def approval_interrupt_id(case_id: str, info_rounds: int) -> str:

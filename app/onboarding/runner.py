@@ -23,6 +23,7 @@ from mock_bank.main import create_app as create_mock_bank
 from mock_bank.main import metadata as bank_metadata
 from onboarding.audit import AuditRow, AuditSink, MemoryAuditLog
 from onboarding.decision import DecisionRequest
+from onboarding.documents import DocumentStore, MemoryDocumentStore
 from onboarding.fixtures import Case, load_cases
 from onboarding.graph import names
 from onboarding.graph.nodes import Deps
@@ -80,7 +81,10 @@ def build_deps(audit: AuditSink, llm: FakeLlm, stack: ExitStack, max_info_rounds
 
 
 def build_offline_env(
-    llm: FakeLlm | None = None, max_info_rounds: int = 2, audit: MemoryAuditLog | None = None
+    llm: FakeLlm | None = None,
+    max_info_rounds: int = 2,
+    audit: MemoryAuditLog | None = None,
+    documents: DocumentStore | None = None,
 ) -> OfflineEnv:
     stack = ExitStack()
     audit = audit or MemoryAuditLog()
@@ -91,7 +95,14 @@ def build_offline_env(
     )
     store = CaseStore(engine)
     store.create_schema()
-    service = CaseService(deps, store, InMemorySaver(serde=checkpoint_serde()), LocalLocks(), max_info_rounds)
+    service = CaseService(
+        deps,
+        store,
+        InMemorySaver(serde=checkpoint_serde()),
+        LocalLocks(),
+        max_info_rounds,
+        documents=documents if documents is not None else MemoryDocumentStore(),
+    )
     return OfflineEnv(service, audit, llm, deps, stack)
 
 

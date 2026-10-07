@@ -18,6 +18,7 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import text
 from starlette.concurrency import run_in_threadpool
 
+from onboarding.api.document_response import document_response
 from onboarding.auth import Principal, TokenStore
 from onboarding.bootstrap import build_service_from_env
 from onboarding.config import Settings
@@ -57,6 +58,9 @@ class CaseOut(BaseModel):
     approval: dict[str, Any] | None = None
     degraded: list[str] | None = None
     final: dict[str, Any] | None = None
+    documents: list[dict[str, Any]] | None = (
+        None  # the originals an officer can open: ids and hashes, not content
+    )
 
 
 def case_out(view: CaseView, who: Principal) -> CaseOut:
@@ -81,6 +85,17 @@ def case_out(view: CaseView, who: Principal) -> CaseOut:
         out.approval = pending if row.waiting_on == "approve" else None
         out.degraded = list(state.degraded) if state else (row.final or {}).get("degraded")
         out.final = row.final
+        if state:
+            out.documents = [
+                {
+                    "doc_ref": d.doc_ref,
+                    "doc_type": d.doc_type,
+                    "sha256": d.sha256,
+                    "content_type": d.content_type,
+                    "stored": d.stored,
+                }
+                for d in state.documents
+            ]
     return out
 
 
@@ -252,6 +267,11 @@ def create_app(
         docs = await read_files({"id_document": id_document, "proof_of_address": proof_of_address})
         view = await run_in_threadpool(svc().add_documents, case_id, interrupt_id, docs, who.id)
         return case_out(view, who)
+
+    @app.get("/cases/{case_id}/documents/{doc_ref}")
+    def get_document(case_id: str, doc_ref: str, who: Annotated[Principal, Depends(officer)]) -> Response:
+        """An original document, for officers only. The view is audited before any byte is returned."""
+        return document_response(svc().get_document(case_id, doc_ref, who.id))
 
     @app.get("/cases/{case_id}/audit")
     def case_audit(case_id: str, who: Annotated[Principal, Depends(officer)]) -> list[dict[str, Any]]:

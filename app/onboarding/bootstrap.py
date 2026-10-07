@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 import httpx
 from sqlalchemy import create_engine
@@ -11,6 +12,7 @@ from sqlalchemy import create_engine
 from onboarding.audit.postgres import PostgresAuditLog
 from onboarding.config import Settings
 from onboarding.db import postgres_checkpointer
+from onboarding.documents import DocumentStore, LocalDocumentStore, S3DocumentStore
 from onboarding.graph.nodes import Deps
 from onboarding.llm.client import BedrockLlm, FakeLlm, LlmClient
 from onboarding.llm.prompts import LocalPromptStore, PromptStore
@@ -34,6 +36,21 @@ def build_llm(s: Settings) -> LlmClient | None:
     if s.llm_backend == "bedrock":
         return BedrockLlm(s.bedrock_model_id, s.aws_region, max_attempts=s.llm_retry_attempts)
     return FakeLlm()
+
+
+def build_document_store(s: Settings) -> DocumentStore | None:
+    if s.document_store == "local":
+        return LocalDocumentStore(Path(s.document_dir))
+    if s.document_store == "s3":
+        import boto3
+
+        return S3DocumentStore(
+            boto3.client("s3", region_name=s.aws_region),
+            s.document_bucket,
+            s.document_prefix,
+            s.document_kms_key_id or None,
+        )
+    return None
 
 
 def build_prompts(s: Settings) -> tuple[PromptStore, Tracer]:
@@ -73,5 +90,12 @@ def build_service_from_env(settings: Settings | None = None) -> Iterator[CaseSer
     )
     with postgres_checkpointer(s.database_url) as saver:
         store = CaseStore(engine)
-        yield CaseService(deps, store, saver, PostgresAdvisoryLocks(engine), s.max_info_rounds)
+        yield CaseService(
+            deps,
+            store,
+            saver,
+            PostgresAdvisoryLocks(engine),
+            s.max_info_rounds,
+            documents=build_document_store(s),
+        )
     engine.dispose()

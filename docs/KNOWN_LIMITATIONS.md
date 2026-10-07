@@ -53,3 +53,8 @@ Accepted gaps, kept honest. Add an entry whenever a decision knowingly leaves so
   volume so data survives a deleted claim.
 - **The first QA run will exercise untested paths:** ESO to Secrets Manager, IRSA for Bedrock (quota is zero, so the LLM falls back to templates after `LLM_RETRY_ATTEMPTS`),
   cross-namespace KYC calls (the real service will not read the smoke test's text files, so extraction is reported unavailable).
+- **Original documents are retained (D-24), so the "nothing stored" privacy story is gone.** Encryption is S3 AES-256 server-side (no customer-managed KMS key unless
+  `DOCUMENT_KMS_KEY_ID` is set), there is no malware scanning, no legal-hold or per-document retention rule, and no UAE-region bucket. The S3 store is tested with moto, not on AWS yet.
+  Anyone with S3 access in the account (not through the app) can read the bucket: limit it by IAM.
+- **If the document store is down at upload,** the case continues with `documents_not_retained` and the originals are lost (the applicant must resend); a stricter institution would refuse the upload.
+- **Officers can open documents of any case;** there is no per-officer assignment or four-eyes rule on viewing (every view is audited, which is how misuse would be found).

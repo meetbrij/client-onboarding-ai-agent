@@ -20,6 +20,8 @@ WORKDIR /srv
 COPY data ./data
 COPY prompts ./prompts
 ENV ONBOARDING_DATA_DIR=/srv/data ONBOARDING_PROMPTS_DIR=/srv/prompts
+# Local-development document store (a named volume copies these permissions); the cluster uses S3.
+RUN mkdir -p /data/documents && chown -R 10001:10001 /data
 USER 10001
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \

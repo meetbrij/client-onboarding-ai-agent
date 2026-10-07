@@ -36,6 +36,11 @@ class Settings:
     session_secret: str = ""
     doc_max_bytes: int = 10 * 1024 * 1024
     checkpoint_retention_days: int = 30
+    document_store: str = "none"  # none | local | s3 (qa and prod require s3)
+    document_dir: str = "/data/documents"  # local store only
+    document_bucket: str = ""
+    document_prefix: str = ""
+    document_kms_key_id: str = ""  # empty: AES-256 server-side encryption
     secure_cookies: bool = False
     extra: dict[str, str] = field(default_factory=dict)
 
@@ -67,6 +72,11 @@ class Settings:
             session_secret=e.get("SESSION_SECRET", ""),
             doc_max_bytes=int(e.get("DOC_MAX_BYTES", str(10 * 1024 * 1024))),
             checkpoint_retention_days=int(e.get("CHECKPOINT_RETENTION_DAYS", "30")),
+            document_store=e.get("DOCUMENT_STORE", "none"),
+            document_dir=e.get("DOCUMENT_DIR", "/data/documents"),
+            document_bucket=e.get("DOCUMENT_BUCKET", ""),
+            document_prefix=e.get("DOCUMENT_PREFIX", ""),
+            document_kms_key_id=e.get("DOCUMENT_KMS_KEY_ID", ""),
             secure_cookies=_bool(e.get("SECURE_COOKIES"), e.get("ENVIRONMENT", "dev") in {"qa", "prod"}),
         )
         s.validate()
@@ -89,6 +99,14 @@ class Settings:
             ]
             if missing:
                 raise ConfigError(f"{', '.join(missing)} must be set in {self.environment}")
+        if self.document_store not in {"none", "local", "s3"}:
+            raise ConfigError("DOCUMENT_STORE must be none, local or s3")
+        if self.document_store == "s3" and not self.document_bucket:
+            raise ConfigError("DOCUMENT_BUCKET is required when DOCUMENT_STORE=s3")
+        if self.environment in {"qa", "prod"} and self.document_store != "s3":
+            raise ConfigError(
+                "DOCUMENT_STORE must be s3 in qa and prod: officers need the original documents"
+            )
         if self.llm_retry_attempts < 1:
             raise ConfigError("LLM_RETRY_ATTEMPTS must be at least 1")
         if self.prompt_label not in {"production", "staging"}:

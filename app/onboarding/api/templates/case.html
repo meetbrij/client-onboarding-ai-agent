@@ -116,7 +116,8 @@
   <section class="card">
     <h2>Documents</h2>
     <ul>
-      {% for d in state.documents %}<li>{{ d.doc_type|replace("_", " ") }} · received, hash {{ d.sha256[:12] }}…{% if d.kyc_document_id %} · extracted{% endif %}</li>{% endfor %}
+      {% for d in state.documents %}<li>{{ d.doc_type|replace("_", " ") }} · received, hash {{ d.sha256[:12] }}…{% if d.kyc_document_id %} · extracted{% endif %}
+        {% if d.stored %}· <a href="/ui/cases/{{ row.case_id }}/documents/{{ d.doc_ref }}" target="_blank" rel="noopener">Open original</a> <span class="tag">access is audited</span>{% else %}· <span class="tag">original not retained</span>{% endif %}</li>{% endfor %}
       {% for d in state.missing_documents %}<li class="missing">{{ d|replace("_", " ") }} · <strong>missing</strong></li>{% endfor %}
     </ul>
     {% set flagged = state.extraction.fields|selectattr("needs_review")|list %}
