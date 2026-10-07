@@ -31,4 +31,4 @@ patches:
 images:
   - name: onboarding
     newName: client-onboarding
-    newTag: "unset"
+    newTag: "372ec2afee3fcab8bfeac1bd1be23fe2ed4c2116"
