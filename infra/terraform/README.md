@@ -5,7 +5,7 @@ OIDC providers, the shared ALB, the Route 53 zone) through data sources and **ne
 removes only what this project created; P3 keeps running. (The reverse is not true: if P3's platform stack is destroyed, the
 cluster under us goes with it.)
 
-Status: written and validated (`terraform validate`, `terraform fmt`) but **not applied**. Applying creates AWS resources and
+Status: applied by the owner for `platform/`, `envs/qa` and `envs/prod`; the pipelines have deployed both environments. It was validated with `terraform validate` and `terraform fmt` before the first apply. Applying creates AWS resources and
 needs your credentials, so it is yours to run.
 
 ## What it creates
@@ -45,30 +45,46 @@ anything of P3's, stop.
 
 ## Set the secret values (once per environment; they are never in Terraform state or Git)
 
-Use letters and digits only for passwords (they are placed in connection URLs). Example for `qa` (repeat with `prod`, fresh values):
+Use the script. It fills the secrets that are still empty and **refuses to overwrite one that already has a value**:
 
 ```bash
-ENV=qa
-PW() { openssl rand -hex 24; }
-OFFICER1=$(PW); OFFICER2=$(PW); SUBMITTER=$(PW); SMOKE=$(PW)
-H() { printf '%s' "$1" | shasum -a 256 | cut -d' ' -f1; }
-
-aws secretsmanager put-secret-value --secret-id $ENV/onboarding/pg-secret --secret-string "$(jq -n \
-  --arg su "$(PW)" --arg owner "$(PW)" --arg app "$(PW)" --arg bank "$(PW)" \
-  '{POSTGRES_PASSWORD:$su, ONBOARDING_OWNER_PASSWORD:$owner, ONBOARDING_APP_PASSWORD:$app, MOCKBANK_PASSWORD:$bank}')"
-
-aws secretsmanager put-secret-value --secret-id $ENV/onboarding/app-secret --secret-string "$(jq -n \
-  --arg tokens "[{\"id\":\"officer-1\",\"role\":\"officer\",\"sha256\":\"$(H $OFFICER1)\"},{\"id\":\"officer-2\",\"role\":\"officer\",\"sha256\":\"$(H $OFFICER2)\"},{\"id\":\"submitter-1\",\"role\":\"submitter\",\"sha256\":\"$(H $SUBMITTER)\"},{\"id\":\"smoke-bot\",\"role\":\"submitter\",\"sha256\":\"$(H $SMOKE)\"}]" \
-  --arg session "$(PW)" --arg smoke "$SMOKE" \
-  '{ONBOARDING_TOKENS:$tokens, SESSION_SECRET:$session, SMOKE_TOKEN:$smoke}')"
-
-# Langfuse keys, or empty strings to leave tracing off for now
-aws secretsmanager put-secret-value --secret-id $ENV/onboarding/langfuse-keys \
-  --secret-string '{"LANGFUSE_PUBLIC_KEY":"","LANGFUSE_SECRET_KEY":""}'
+scripts/set_secrets.sh qa --dry-run     # shows what it would do, changes nothing
+scripts/set_secrets.sh qa               # writes pg-secret, app-secret and langfuse-keys where they are empty
+scripts/set_secrets.sh prod             # the same for prod, with its own fresh values
 ```
 
-Keep `$OFFICER1`, `$OFFICER2` and `$SUBMITTER` somewhere safe: they are the tokens people sign in with, and only their hashes are stored.
-`KYC_API_KEY` goes into `app-secret` too once P3's KYC service has its API key enabled (P3 notes it is off for now).
+- It prints the sign-in tokens for `officer-1`, `officer-2` and `submitter-1` **once**, when it writes `app-secret`. Save them: only their hashes are stored.
+  The smoke-test token is stored in the secret and read by the pipeline; you do not need it.
+- A secret that already has a value is skipped and its current version id is shown. To replace one on purpose:
+  `scripts/set_secrets.sh qa --force app-secret`. It prints the old and new version ids and the exact roll-back command.
+- **`pg-secret` needs a second flag** even with `--force`: `--confirm-pg-secret-overwrite`. Postgres reads its passwords only when its volume is first created, so
+  replacing them later locks the API and the mock bank out of the database at the next pod restart or deploy. Do not do it unless the database does not exist yet.
+- Langfuse keys: put them in the environment first (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`) to store real ones; otherwise the secret gets empty strings and tracing stays off.
+- The script never reads a secret's value (it asks Secrets Manager only whether a current version exists), needs `aws`, `jq` and `openssl`, and is tested against a fake `aws`
+  (`tests/test_set_secrets.py`).
+- `KYC_API_KEY` goes into `app-secret` too once P3's KYC service has its API key enabled (P3 notes it is off for now); add it with `--force app-secret` and a re-run of the tokens, or by hand.
+
+### If a secret was overwritten by mistake
+
+Secrets Manager keeps the previous value as `AWSPREVIOUS`. Do not restart pods or deploy until it is restored.
+
+```bash
+aws secretsmanager list-secret-version-ids --secret-id qa/onboarding/pg-secret --include-deprecated --region ap-south-1 \
+  --query 'Versions[].{id:VersionId,stages:VersionStages,created:CreatedDate}' --output table
+aws secretsmanager update-secret-version-stage --secret-id qa/onboarding/pg-secret --region ap-south-1 \
+  --version-stage AWSCURRENT --move-to-version-id <PREVIOUS_ID> --remove-from-version-id <CURRENT_ID>
+kubectl annotate externalsecret pg-secret app-secret -n onboarding-qa force-sync=$(date +%s) --overwrite
+```
+
+Then prove the cluster secret equals what the running pods use, by comparing fingerprints (never print the values):
+
+```bash
+kubectl get secret pg-secret -n onboarding-qa -o jsonpath='{.data.ONBOARDING_APP_PASSWORD}' | base64 -d | shasum -a 256
+kubectl exec -n onboarding-qa deploy/onboarding-api -c api -- sh -c 'printf %s "$ONBOARDING_APP_PASSWORD" | sha256sum'
+```
+
+If `AWSPREVIOUS` is not the original (the secret was overwritten more than once), the running Postgres pod still has the original passwords in its environment: rebuild the
+secret from `kubectl exec -n onboarding-qa postgres-0 -- env` (the four password variables) and write it with `put-secret-value` from a private file, then repeat the checks.
 
 ## GitHub settings (not in Terraform)
 

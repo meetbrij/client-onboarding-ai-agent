@@ -43,6 +43,7 @@ Status: **Planned** = not built; **Built; tested** = the control exists and the 
 | Third-party / outsourcing | C-15 Vendor accountability: Langfuse | Same treatment; Cloud for the portfolio build (D-07); documented in-region self-host path for a bank; payloads PII-free | `DECISIONS.md` D-07; `tests/test_prompt_payloads.py` | Planned |
 | Third-party / outsourcing | C-16 Vendor update testing | Model id and prompt versions are pinned and recorded; changing either requires re-running evals (documented procedure) | `docs/EVALS.md` | Planned |
 | Consumer rights (human review on request) | C-17 Human decides every case | Every case ends with a named human decision | `tests/test_runner_fixtures.py` (every fixture ends with a named officer's decision or waits for one); `execute` is unreachable otherwise | Built; tested |
+| Governance; data protection | C-19 Secret handling does not overwrite live credentials | `scripts/set_secrets.sh` skips secrets that already have a value, needs an extra flag for the database password, prints the old version and the roll-back command, and never reads a value | `tests/test_set_secrets.py`; DECISIONS D-25 | Built; tested (against a fake `aws`) |
 
 ## Known gaps against the guidance topics (be upfront)
 - **Bilingual (Arabic/English) explanations:** reported by a secondary source as expected for customer-facing explanations.

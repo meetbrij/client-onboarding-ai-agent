@@ -1,7 +1,25 @@
 # Plan
 
-Five phases. Each has a "done when" check that someone else could run. Decisions marked D-nn are in `DECISIONS.md` and
-are proposals until the user approves them.
+Five phases. Each has a "done when" check that someone else could run. Decisions marked D-nn are in `DECISIONS.md`; each says whether it is
+Accepted or still Proposed.
+
+## Where things stand (2026-10-07)
+
+| Phase | State | Evidence |
+|---|---|---|
+| 0 README and diagrams | done | `README.md` |
+| 1 Scaffolding, sanctions loader, fixtures, mock bank | done | Phase 1 results below |
+| 2 Graph to assess, rules, audit chain | done | Phase 2 results below |
+| 3 Approval, resume, execute, API, UI, Langfuse | done | Phase 3 results below |
+| 4 Image, manifests, Terraform, pipelines, qa and prod | **done** (deployed) | QA pipeline runs on `qa` are green (GitHub Actions); the first prod run was approved and succeeded after the prod stack existed; the owner submitted and approved a case on the prod URL and used QA by hand, including opening original documents as an officer. The owner's hands-on checks are reported by the owner, not re-run here. |
+| 4+ Fixes and additions found in use | done | non-blocking API (a blocked event loop restarted the pod), busy state in the UI, officer access to original documents (D-24), `make check`, `scripts/set_secrets.sh` (D-25) |
+| 3b Evals | **blocked** | Bedrock quota is zero in the account, so P3's KYC service cannot extract and the LLM falls back to templates; no eval has been run and no numbers exist |
+| 5 README numbers, controls evidence, screenshots, demo | not started | the parts needing numbers wait for 3b |
+
+**Next, in order:** (1) request the Bedrock quota increase (the critical path, days of lead time); (2) meanwhile finish deployment housekeeping:
+Langfuse project and keys, `sync_prompts.py`, enabling P3's KYC API key, restoring the QA secrets (see D-25 and `infra/terraform/README.md`), SonarCloud if wanted;
+(3) decide on an audited "manually verified" attestation that would let an officer approve when extraction is unavailable (proposed, not built);
+(4) Phase 3b evals once quota lands; (5) Phase 5.
 
 ## Scope in one paragraph
 Nine-step workflow: intake, extract (P3 KYC over HTTP), screen (vendored UN snapshot), assess (Python rules), approve
@@ -117,7 +135,7 @@ harness, metrics, LLM-judge, Langfuse dataset and run, first committed `evals/re
 exits 0 in CI; Langfuse run name and trace ids in the file resolve. Until then, the README makes no eval claims.
 
 ## Phase 4: images, manifests, pipeline, cluster
-**Status: written and validated locally on `feature/onb-004-deploy-eks`; NOT deployed (applying Terraform and running the pipelines need your AWS credentials, GitHub settings and secret values). Results and the manual steps are at the end of this section.**
+**Status: done and deployed.** It was first written and validated locally; the owner then applied Terraform, set the secrets and the GitHub settings, and the pipelines deployed `qa` and `prod`. The local-validation results below describe what was checked before the first deploy; the first deploys also surfaced the follow-up fixes listed under "Phase 4 follow-ups" further down.
 Deliverables: one image, two Deployments (`onboarding-api`, `onboarding-mock-bank`) selected by `command:` (D-11); Postgres StatefulSet per env; `k8s/{qa,prod}` kustomize (SecretStore, ExternalSecret,
 Ingress in the shared ALB group, probes, non-root, read-only root fs, resource requests sized to the namespace quota);
 `infra/terraform` own stack (ECR repo, namespaces `onboarding-qa/prod` with quota, deploy roles trusting this repo, IRSA role
