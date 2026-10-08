@@ -108,7 +108,7 @@ spec:
             - name: KYC_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: app-secret
+                  name: kyc-api-key
                   key: KYC_API_KEY
                   optional: true
             - name: MOCK_BANK_URL
@@ -130,9 +130,18 @@ spec:
                 secretKeyRef:
                   name: app-secret
                   key: SESSION_SECRET
-            # The LLM is advisory. India-only inference profile (inference stays in ap-south-1 and ap-south-2).
+            # The LLM is advisory. Bedrock quota is zero in this account, so the Anthropic API is used for now (D-26): synthetic data only.
+            # To go back to Bedrock set LLM_BACKEND to bedrock; the India-only inference profile below is then used
+            # (inference stays in ap-south-1 and ap-south-2).
             - name: LLM_BACKEND
-              value: bedrock
+              value: anthropic
+            - name: ANTHROPIC_MODEL
+              value: claude-haiku-4-5
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: anthropic-api-key
+                  key: ANTHROPIC_API_KEY
             - name: LLM_ENABLED
               value: "true"
             - name: LLM_RETRY_ATTEMPTS
@@ -165,7 +174,7 @@ spec:
               drop: ["ALL"]
           resources:
             requests:
-              cpu: 100m
+              cpu: 50m
               memory: 192Mi
             limits:
               cpu: 500m

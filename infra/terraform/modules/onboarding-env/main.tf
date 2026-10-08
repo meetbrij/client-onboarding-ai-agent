@@ -14,7 +14,7 @@ data "aws_region" "current" {}
 locals {
   namespace = "onboarding-${var.env_name}"
   prefix    = "${var.env_name}/onboarding"
-  secrets   = toset(["pg-secret", "app-secret", "langfuse-keys"])
+  secrets   = toset(["pg-secret", "app-secret", "langfuse-keys", "kyc-api-key", "anthropic-api-key"])
 }
 
 # ---------------------------------------------------------------- namespace
@@ -81,6 +81,8 @@ resource "kubernetes_limit_range_v1" "this" {
 #   pg-secret      Postgres passwords (see infra/terraform/README.md for the keys)
 #   app-secret     officer tokens (hashed), session secret, smoke-test token, optional KYC API key
 #   langfuse-keys  Langfuse public and secret key (may be empty: tracing is then off)
+#   kyc-api-key       {"KYC_API_KEY": ...}: P3's KYC service key for this environment
+#   anthropic-api-key {"ANTHROPIC_API_KEY": ...}: our advisory LLM while Bedrock quota is zero (synthetic data only, D-26)
 resource "aws_secretsmanager_secret" "this" {
   for_each = local.secrets
 

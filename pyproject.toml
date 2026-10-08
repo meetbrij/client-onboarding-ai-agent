@@ -20,6 +20,7 @@ dependencies = [
     "jinja2>=3.1",
     "itsdangerous>=2.2",
     "langfuse>=3.0",
+    "anthropic>=1.12.1",
 ]
 
 [dependency-groups]
@@ -30,6 +31,7 @@ dev = [
     "types-PyYAML",
     "pytest-timeout>=2.4.0",
     "moto[s3]>=5",
+    "pillow>=12.3.0",
 ]
 
 [build-system]
@@ -53,7 +55,7 @@ select = ["E", "F", "I", "B", "UP", "S"]
 ignore = ["S101", "E501"]  # long strings and SQL are left to ruff format
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S105", "S106"]
+"tests/**" = ["S105", "S106", "S603", "S607"]  # tests run fixed commands (kubectl, bash) on purpose
 
 [tool.mypy]
 python_version = "3.12"

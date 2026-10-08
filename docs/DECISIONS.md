@@ -351,3 +351,23 @@ is net-new here. MIA runs on Azure (Azure OpenAI, Key Vault, Container Apps, Hel
   is now always created, and the existing one is kept with a `moved` block); the pipeline fills the bucket name in at deploy time because it contains the account id; CONTROLS
   gets C-18. Not decided here: a UAE-region bucket, KMS customer keys, malware scanning and legal-hold rules for real use.
 - **Status:** Accepted (user, 2026-10-07).
+
+### D-25 · Secrets are set by a script that refuses to overwrite (user request, 2026-10-07)
+- **Context:** the setup commands in the infrastructure README were run for the wrong environment (`qa`) after QA was live. They replaced the QA Postgres passwords in
+  Secrets Manager, but the database kept its originals (Postgres reads passwords only when its volume is first created). External Secrets would copy the new values into the
+  cluster within the hour and the next pod restart or deploy would fail to connect. Nothing was lost (the previous version is kept), but QA had to be restored by hand.
+- **Decision:** `scripts/set_secrets.sh <qa|prod>` replaces the copy-paste commands. It asks Secrets Manager only whether a current version exists (it never reads a value),
+  fills the secrets that are empty and **skips any that already have a value**, printing the existing version id. `--force <name>` replaces one secret and prints the old and new
+  version ids and the exact roll-back command. `pg-secret` additionally needs `--confirm-pg-secret-overwrite`, with a message that says why. `--dry-run` changes nothing. Values go
+  through a private temporary file, never a command line, and only the three sign-in tokens are printed, once.
+- **Evidence:** `tests/test_set_secrets.py` runs the real script against a fake `aws` (16 tests, including mutation checks that fail if the skip or the pg confirmation is removed).
+- **Not done:** an IAM policy or a Secrets Manager resource policy that blocks overwriting `pg-secret` for human users, and rotation. A script protects against slips, not against a
+  determined administrator.
+- **Status:** Accepted (user, 2026-10-07).
+
+### D-26 · An Anthropic API backend for our advisory LLM, while Bedrock quota is zero (user, 2026-10-08)
+- **Context:** the Bedrock quota for Anthropic models in the AWS account is zero and could not be raised in time. P3 added a provider switch (`LLM_PROVIDER=anthropic|bedrock`) so its KYC service answers through the Anthropic API.
+- **Decision:** our LLM client gets the same switch: `LLM_BACKEND=anthropic` (with `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, default `claude-haiku-4-5`) next to `bedrock` and `fake`. Same retry and backoff policy as the Bedrock client, SDK retries off, errors reported by class only. Prompts, output checks, audit rows and the "LLM never decides" rules are unchanged. Config refuses to start with `anthropic` selected and no key.
+- **Consequence:** documents (via P3) and prompts (ours) leave AWS on this route. It is acceptable only for synthetic, SPECIMEN-marked data, and docs say so (README, MODEL_INVENTORY, CONTROLS). It is a demo and evaluation choice, not an architecture decision: the deployed environments still default to Bedrock, and a bank would use Bedrock in-region.
+- **Evidence:** `tests/test_llm.py` (retry, give-up, no retry on client errors, no body text in errors); the live eval run records the model id.
+- **Status:** Accepted (user, 2026-10-08).

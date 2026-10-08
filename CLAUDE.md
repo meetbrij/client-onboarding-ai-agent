@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude Code in this repository. Status: **Phases 1 to 3 done; Phase 4 written and validated locally but not applied (Terraform, secrets and the first pipeline run are the user's to do: see `infra/terraform/README.md` and PLAN): the full workflow (intake to execute, with the officer pause, the document loop, crash-safe resume), Postgres checkpointer and hash-chained audit log, API, officer UI, Langfuse tracing and prompt management. Not yet: evals (3b, waiting for P3's KYC service), deploy (4).** Langfuse Cloud and Bedrock have not been called for real (no keys, zero quota): they are tested with the real SDK against an in-memory exporter, and with stubs.
+Guidance for Claude Code in this repository. Status (2026-10-08): **All phases done. Deployed to `qa` and `prod` on EKS via the pipelines; first live eval (2026-10-08) passed 10 of 12 cases (`evals/results/2026-10-08-live.json`); README numbers are checked by `scripts/check_numbers.py`.** The workflow (intake to execute, officer pause, document loop, crash-safe resume), Postgres checkpointer, hash-chained audit log, API, officer UI, document store, Langfuse tracing and prompt management are built. Bedrock and Langfuse Cloud have not been called for real (zero quota, no keys); the live eval used the Anthropic API (D-26, synthetic data only): they are tested with the real SDK against an in-memory exporter, and with stubs. See `docs/PLAN.md` "Where things stand".
 Build phase by phase as in `docs/PLAN.md`; decisions in `docs/DECISIONS.md` are accepted unless marked otherwise.
 
 ## Purpose
@@ -40,7 +40,7 @@ app/mock_bank/         separate small FastAPI service (same image, different com
 data/sanctions/        dated snapshot + manifest (source, date, sha256); scripts/load_sanctions.py builds the index
 data/reference/        high-risk jurisdictions and occupations (dated, sourced)
 prompts/               local fallback copies of the Langfuse prompts
-evals/                 cases/*.yaml, run.py, metrics.py, judge.py, results/<date>.json
+evals/                 cases/*.yaml, run.py, metrics.py, judge.py, specimen.py, thresholds.yaml, results/<date>-live.json
 k8s/{qa,prod}/         kustomize, P3 pattern     infra/terraform/   our own stack on P3's cluster (D-03, D-10)
 .github/workflows/     copied and adapted from P3
 Dockerfile  docker-compose.yml  pyproject.toml  tests/  (incl. API-to-mock-bank contract test)
@@ -56,8 +56,10 @@ uv run python scripts/load_sanctions.py      # rebuild index from data/sanctions
 uv run pytest                                # offline; set MOCK_BANK_TEST_DATABASE_URL (compose postgres) to include the Postgres race test
 uv run python scripts/make_fixtures.py       # regenerate evals/cases/*.yaml (committed; tests check them against the snapshot)
 make check                                   # ruff check, ruff format --check, mypy and the fixture run: what CI runs. Run it BEFORE every push
-# evals are deferred until P3's KYC service is live (D-15, Phase 3b):
-uv run python -m evals.run --live            # live KYC + Bedrock + Langfuse; writes evals/results/<date>.json
+make evals                                   # deterministic eval gate (no network); also part of pytest
+# live eval: put KYC_API_KEY and ANTHROPIC_API_KEY in .env.eval (git-ignored), then `set -a; source .env.eval; set +a`
+uv run python -m evals.run --live --kyc-url https://<P3 KYC host>   # writes evals/results/<date>-live.json
+uv run python scripts/check_numbers.py       # README evaluation numbers must come from the latest live result
 uv run python -m onboarding.audit verify     # verify_audit_chain against $DATABASE_URL: exit 1 and the first broken row on a break
 uv run python -m onboarding.graph.build --all   # offline: all 12 fixtures end to end (scripted officer), compared with their expectations
 uv run python -m onboarding.db migrate       # needs OWNER_DATABASE_URL and APP_DB_ROLE; `purge` deletes old checkpoints
@@ -125,7 +127,7 @@ audit_head: str                   # row_hash of the last audit row written for t
 runs (build, scans, ECR push, deploy to `onboarding-qa`). Then a PR `qa` into `main`; after that merge succeeds the prod pipeline runs
 (approval-gated retag and deploy to `onboarding-prod`). `hotfix/*` is cut from `main` and merged into `main` and `qa`. Names are
 lowercase `<type>/<ticket-id>-<short-slug>`, for example `feature/onb-001-branching-strategy`; releases are tagged `vMAJOR.MINOR.PATCH`.
-Until Phase 4 the only workflow is `ci.yml` (Gitleaks, lint, types, tests), which runs on PRs and pushes to `qa` and `main`; nothing deploys.
+Workflows: `qa-cicd.yml` (PRs and pushes to `qa`/`main`; deploys only on a push to `qa`) and `prod-cd.yaml` (push to `main`, approval-gated). Run `make check` before every push.
 
 ## Things that will bite you
 - **interrupt() re-runs the node from the top on resume.** Nothing before `interrupt()` may have side effects (audit writes,
@@ -156,6 +158,9 @@ Until Phase 4 the only workflow is `ci.yml` (Gitleaks, lint, types, tests), whic
 - **FastAPI annotations:** `api/main.py` must not use `from __future__ import annotations` (it breaks `Depends` on local functions, giving a
   silent 422). Form uploads come back as Starlette's `UploadFile`, not FastAPI's subclass.
 - **Langfuse SDK keeps process-wide state:** tests share one client per module (several create/shutdown cycles hang).
+- **Never write a secret by hand: use `scripts/set_secrets.sh <env>`.** It skips any secret that already has a value; `pg-secret` also needs
+  `--confirm-pg-secret-overwrite` (Postgres keeps its original passwords, so overwriting locks the API out at the next restart; this happened once on QA).
+  Restore steps are in `infra/terraform/README.md`. A hook blocks `get-secret-value` in shell commands: the script uses `describe-secret` and never reads values.
 - **First deploy needs the secret values first** (`infra/terraform/README.md`): the pods read them through External Secrets and wait without them.
   The API's init container runs `onboarding.db migrate` (owner role, advisory-locked, idempotent); the app itself only has the restricted role.
 - **Do not use `pg_advisory_lock` (blocking) or leave a transaction open in `migrate`**: both stall LangGraph's `CREATE INDEX CONCURRENTLY`.

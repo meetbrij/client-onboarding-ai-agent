@@ -1,0 +1,1047 @@
+{
+  "date": "2026-10-08",
+  "git_sha": "40a4e58",
+  "mode": "live",
+  "llm_modes_seen": [
+    "anthropic",
+    "template"
+  ],
+  "llm_model": "claude-haiku-4-5",
+  "kyc": {
+    "url_host": "proj3-aigateway.bolarbrijesh.com",
+    "models_reported": [
+      "claude-haiku-4-5"
+    ]
+  },
+  "prompt_versions": {
+    "onboarding-annotate-hit": "local-fallback",
+    "onboarding-draft-missing-docs": "local-fallback",
+    "onboarding-explain-recommendation": "local-fallback",
+    "onboarding-summarise-case": "local-fallback"
+  },
+  "sanctions_snapshot": {
+    "source": "UN",
+    "date": "2026-10-03"
+  },
+  "n_cases": 12,
+  "metrics": {
+    "cases": 12,
+    "cases_passed": 10,
+    "recommendation_accuracy": {
+      "passed": 11,
+      "of": 12,
+      "rate": 0.9167
+    },
+    "risk_rating_accuracy": {
+      "passed": 10,
+      "of": 12,
+      "rate": 0.8333
+    },
+    "final_status_accuracy": {
+      "passed": 12,
+      "of": 12,
+      "rate": 1.0
+    },
+    "fired_rules_match": {
+      "passed": 10,
+      "of": 12,
+      "rate": 0.8333
+    },
+    "trajectory_exact": {
+      "passed": 12,
+      "of": 12,
+      "rate": 1.0
+    },
+    "required_steps_present": {
+      "passed": 12,
+      "of": 12,
+      "rate": 1.0
+    },
+    "degrade_correctness": {
+      "passed": 12,
+      "of": 12,
+      "rate": 1.0
+    },
+    "invariants": {
+      "passed": 12,
+      "of": 12,
+      "rate": 1.0
+    },
+    "sanctions_recall": 1.0,
+    "sanctions_precision": 1.0,
+    "sanctions_recall_strong": 1.0,
+    "sanctions_precision_strong": 1.0,
+    "hit_counts": {
+      "tp": 3,
+      "fp": 0,
+      "fn": 0
+    },
+    "draft_deterministic_checks": {
+      "passed": 2,
+      "of": 2
+    },
+    "extraction_fields_matching_specimen": {
+      "matched": 111,
+      "of": 111
+    }
+  },
+  "thresholds_met": {
+    "recommendation_accuracy": false,
+    "risk_rating_accuracy": false,
+    "final_status_accuracy": true,
+    "fired_rules_match": false,
+    "trajectory_exact": true,
+    "required_steps_present": true,
+    "degrade_correctness": true,
+    "invariants": true,
+    "sanctions_recall": true,
+    "sanctions_precision": true,
+    "sanctions_recall_strong": true,
+    "sanctions_precision_strong": true,
+    "draft_deterministic_checks": true
+  },
+  "judge": {
+    "model": "claude-sonnet-5-5",
+    "rubric_version": "v1",
+    "criteria": [
+      "requests_exactly_the_missing_documents",
+      "no_hint_of_screening_risk_or_internal_assessment",
+      "no_decision_stated_or_implied",
+      "clear_polite_actionable_no_invented_deadlines_fees_or_policies",
+      "no_personal_data_beyond_the_applicant_name"
+    ],
+    "drafts": {
+      "missing_poa": {
+        "scores": {
+          "requests_exactly_the_missing_documents": 2,
+          "no_hint_of_screening_risk_or_internal_assessment": 2,
+          "no_decision_stated_or_implied": 2,
+          "clear_polite_actionable_no_invented_deadlines_fees_or_policies": 2,
+          "no_personal_data_beyond_the_applicant_name": 2
+        },
+        "total": 10,
+        "reason": "The draft asks only for proof of address, says nothing about screening, risk or any decision, stays polite and actionable without inventing deadlines, fees or policies, and uses only the applicant's name."
+      },
+      "multiple_issues": {
+        "scores": {
+          "requests_exactly_the_missing_documents": 2,
+          "no_hint_of_screening_risk_or_internal_assessment": 2,
+          "no_decision_stated_or_implied": 2,
+          "clear_polite_actionable_no_invented_deadlines_fees_or_policies": 2,
+          "no_personal_data_beyond_the_applicant_name": 2
+        },
+        "total": 10,
+        "reason": "The draft asks only for proof of address, says nothing about screening or internal assessment, states no decision, stays polite and actionable without invented deadlines or fees, and uses only the applicant's name."
+      }
+    }
+  },
+  "langfuse": "not used in this run",
+  "cases": [
+    {
+      "id": "alias_hit",
+      "pass": true,
+      "checks": {
+        "recommendation": true,
+        "risk_rating": true,
+        "final_status": true,
+        "hits": true,
+        "fired_rules": true,
+        "trajectory": true,
+        "required_steps": true,
+        "degraded": true,
+        "invariants": true
+      },
+      "draft_deterministic_ok": null,
+      "actual": {
+        "recommendation": "reject",
+        "risk_rating": "high",
+        "hits": [
+          [
+            "CDi.021",
+            "strong"
+          ]
+        ],
+        "fired_rules": [
+          "R-SAN-01"
+        ],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve"
+        ],
+        "final_status": "rejected",
+        "summary_by": "llm",
+        "drafted_by": "llm",
+        "missing_documents": [],
+        "missing_doc_draft": null,
+        "extraction_fields_matching_specimen": [
+          11,
+          11
+        ]
+      },
+      "expected": {
+        "recommendation": "reject",
+        "risk_rating": "high",
+        "hits": [
+          [
+            "CDi.021",
+            "strong"
+          ]
+        ],
+        "fired_rules": [
+          "R-SAN-01"
+        ],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve"
+        ],
+        "final_status": "rejected"
+      },
+      "audit_chain_ok": true,
+      "run": {
+        "seconds": 10.8,
+        "llm_calls": 2,
+        "llm_failures": 0,
+        "tokens": {
+          "input": 682,
+          "output": 308
+        },
+        "kyc_models": [
+          "claude-haiku-4-5"
+        ]
+      }
+    },
+    {
+      "id": "clean_approve",
+      "pass": true,
+      "checks": {
+        "recommendation": true,
+        "risk_rating": true,
+        "final_status": true,
+        "hits": true,
+        "fired_rules": true,
+        "trajectory": true,
+        "required_steps": true,
+        "degraded": true,
+        "invariants": true
+      },
+      "draft_deterministic_ok": null,
+      "actual": {
+        "recommendation": "approve",
+        "risk_rating": "low",
+        "hits": [],
+        "fired_rules": [],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "execute"
+        ],
+        "final_status": "approved",
+        "summary_by": "llm",
+        "drafted_by": "llm",
+        "missing_documents": [],
+        "missing_doc_draft": null,
+        "extraction_fields_matching_specimen": [
+          11,
+          11
+        ]
+      },
+      "expected": {
+        "recommendation": "approve",
+        "risk_rating": "low",
+        "hits": [],
+        "fired_rules": [],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "execute"
+        ],
+        "final_status": "approved"
+      },
+      "audit_chain_ok": true,
+      "run": {
+        "seconds": 8.7,
+        "llm_calls": 2,
+        "llm_failures": 0,
+        "tokens": {
+          "input": 476,
+          "output": 186
+        },
+        "kyc_models": [
+          "claude-haiku-4-5"
+        ]
+      }
+    },
+    {
+      "id": "high_risk_jurisdiction",
+      "pass": true,
+      "checks": {
+        "recommendation": true,
+        "risk_rating": true,
+        "final_status": true,
+        "hits": true,
+        "fired_rules": true,
+        "trajectory": true,
+        "required_steps": true,
+        "degraded": true,
+        "invariants": true
+      },
+      "draft_deterministic_ok": null,
+      "actual": {
+        "recommendation": "manual_review",
+        "risk_rating": "high",
+        "hits": [],
+        "fired_rules": [
+          "R-JUR-01"
+        ],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "execute"
+        ],
+        "final_status": "approved",
+        "summary_by": "llm",
+        "drafted_by": "llm",
+        "missing_documents": [],
+        "missing_doc_draft": null,
+        "extraction_fields_matching_specimen": [
+          11,
+          11
+        ]
+      },
+      "expected": {
+        "recommendation": "manual_review",
+        "risk_rating": "high",
+        "hits": [],
+        "fired_rules": [
+          "R-JUR-01"
+        ],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "execute"
+        ],
+        "final_status": "approved"
+      },
+      "audit_chain_ok": true,
+      "run": {
+        "seconds": 8.6,
+        "llm_calls": 2,
+        "llm_failures": 0,
+        "tokens": {
+          "input": 552,
+          "output": 207
+        },
+        "kyc_models": [
+          "claude-haiku-4-5"
+        ]
+      }
+    },
+    {
+      "id": "high_risk_occupation",
+      "pass": true,
+      "checks": {
+        "recommendation": true,
+        "risk_rating": true,
+        "final_status": true,
+        "hits": true,
+        "fired_rules": true,
+        "trajectory": true,
+        "required_steps": true,
+        "degraded": true,
+        "invariants": true
+      },
+      "draft_deterministic_ok": null,
+      "actual": {
+        "recommendation": "manual_review",
+        "risk_rating": "medium",
+        "hits": [],
+        "fired_rules": [
+          "R-OCC-01"
+        ],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "execute"
+        ],
+        "final_status": "approved",
+        "summary_by": "llm",
+        "drafted_by": "llm",
+        "missing_documents": [],
+        "missing_doc_draft": null,
+        "extraction_fields_matching_specimen": [
+          11,
+          11
+        ]
+      },
+      "expected": {
+        "recommendation": "manual_review",
+        "risk_rating": "medium",
+        "hits": [],
+        "fired_rules": [
+          "R-OCC-01"
+        ],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "execute"
+        ],
+        "final_status": "approved"
+      },
+      "audit_chain_ok": true,
+      "run": {
+        "seconds": 9.0,
+        "llm_calls": 2,
+        "llm_failures": 0,
+        "tokens": {
+          "input": 552,
+          "output": 216
+        },
+        "kyc_models": [
+          "claude-haiku-4-5"
+        ]
+      }
+    },
+    {
+      "id": "kyc_unavailable",
+      "pass": true,
+      "checks": {
+        "recommendation": true,
+        "risk_rating": true,
+        "final_status": true,
+        "hits": true,
+        "fired_rules": true,
+        "trajectory": true,
+        "required_steps": true,
+        "degraded": true,
+        "invariants": true
+      },
+      "draft_deterministic_ok": null,
+      "actual": {
+        "recommendation": "manual_review",
+        "risk_rating": "high",
+        "hits": [],
+        "fired_rules": [
+          "R-DOC-03"
+        ],
+        "degraded": [
+          "extraction_unavailable"
+        ],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "await_docs"
+        ],
+        "final_status": "awaiting_documents",
+        "summary_by": "llm",
+        "drafted_by": "llm",
+        "missing_documents": [],
+        "missing_doc_draft": null,
+        "extraction_fields_matching_specimen": [
+          0,
+          0
+        ]
+      },
+      "expected": {
+        "recommendation": "manual_review",
+        "risk_rating": "high",
+        "hits": [],
+        "fired_rules": [
+          "R-DOC-03"
+        ],
+        "degraded": [
+          "extraction_unavailable"
+        ],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "await_docs"
+        ],
+        "final_status": "awaiting_documents"
+      },
+      "audit_chain_ok": true,
+      "run": {
+        "seconds": 4.0,
+        "llm_calls": 2,
+        "llm_failures": 0,
+        "tokens": {
+          "input": 570,
+          "output": 217
+        },
+        "kyc_models": []
+      }
+    },
+    {
+      "id": "llm_unavailable",
+      "pass": true,
+      "checks": {
+        "recommendation": true,
+        "risk_rating": true,
+        "final_status": true,
+        "hits": true,
+        "fired_rules": true,
+        "trajectory": true,
+        "required_steps": true,
+        "degraded": true,
+        "invariants": true
+      },
+      "draft_deterministic_ok": null,
+      "actual": {
+        "recommendation": "approve",
+        "risk_rating": "low",
+        "hits": [],
+        "fired_rules": [],
+        "degraded": [
+          "llm_unavailable"
+        ],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "execute"
+        ],
+        "final_status": "approved",
+        "summary_by": "template",
+        "drafted_by": "template",
+        "missing_documents": [],
+        "missing_doc_draft": null,
+        "extraction_fields_matching_specimen": [
+          11,
+          11
+        ]
+      },
+      "expected": {
+        "recommendation": "approve",
+        "risk_rating": "low",
+        "hits": [],
+        "fired_rules": [],
+        "degraded": [
+          "llm_unavailable"
+        ],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "execute"
+        ],
+        "final_status": "approved"
+      },
+      "audit_chain_ok": true,
+      "run": {
+        "seconds": 5.3,
+        "llm_calls": 1,
+        "kyc_models": [
+          "claude-haiku-4-5"
+        ]
+      }
+    },
+    {
+      "id": "low_confidence_extraction",
+      "pass": false,
+      "checks": {
+        "recommendation": false,
+        "risk_rating": false,
+        "final_status": true,
+        "hits": true,
+        "fired_rules": false,
+        "trajectory": true,
+        "required_steps": true,
+        "degraded": true,
+        "invariants": true
+      },
+      "draft_deterministic_ok": null,
+      "actual": {
+        "recommendation": "approve",
+        "risk_rating": "low",
+        "hits": [],
+        "fired_rules": [],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "execute"
+        ],
+        "final_status": "approved",
+        "summary_by": "llm",
+        "drafted_by": "llm",
+        "missing_documents": [],
+        "missing_doc_draft": null,
+        "extraction_fields_matching_specimen": [
+          11,
+          11
+        ]
+      },
+      "expected": {
+        "recommendation": "manual_review",
+        "risk_rating": "medium",
+        "hits": [],
+        "fired_rules": [
+          "R-DOC-02"
+        ],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "execute"
+        ],
+        "final_status": "approved"
+      },
+      "audit_chain_ok": true,
+      "run": {
+        "seconds": 8.7,
+        "llm_calls": 2,
+        "llm_failures": 0,
+        "tokens": {
+          "input": 472,
+          "output": 181
+        },
+        "kyc_models": [
+          "claude-haiku-4-5"
+        ]
+      }
+    },
+    {
+      "id": "missing_poa",
+      "pass": true,
+      "checks": {
+        "recommendation": true,
+        "risk_rating": true,
+        "final_status": true,
+        "hits": true,
+        "fired_rules": true,
+        "trajectory": true,
+        "required_steps": true,
+        "degraded": true,
+        "invariants": true
+      },
+      "draft_deterministic_ok": true,
+      "actual": {
+        "recommendation": "request_info",
+        "risk_rating": "medium",
+        "hits": [],
+        "fired_rules": [
+          "R-DOC-01"
+        ],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "await_docs",
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "execute"
+        ],
+        "final_status": "approved",
+        "summary_by": "llm",
+        "drafted_by": "llm",
+        "missing_documents": [
+          "proof_of_address"
+        ],
+        "missing_doc_draft": "Dear Priya Menon Varghese,\n\nThank you for submitting your application. To help us process your request, we need one additional document:\n\n- Proof of address\n\nPlease provide this document at your earliest convenience and send it to [bank contact].\n\nIf you have any questions, please don't hesitate to reach out.\n\nKind regards,\n[Bank Name]",
+        "extraction_fields_matching_specimen": [
+          6,
+          6
+        ]
+      },
+      "expected": {
+        "recommendation": "request_info",
+        "risk_rating": "medium",
+        "hits": [],
+        "fired_rules": [
+          "R-DOC-01"
+        ],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "await_docs",
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "execute"
+        ],
+        "final_status": "approved"
+      },
+      "audit_chain_ok": true,
+      "run": {
+        "seconds": 13.7,
+        "llm_calls": 5,
+        "llm_failures": 0,
+        "tokens": {
+          "input": 1195,
+          "output": 506
+        },
+        "kyc_models": [
+          "claude-haiku-4-5"
+        ]
+      }
+    },
+    {
+      "id": "multiple_issues",
+      "pass": false,
+      "checks": {
+        "recommendation": true,
+        "risk_rating": false,
+        "final_status": true,
+        "hits": true,
+        "fired_rules": false,
+        "trajectory": true,
+        "required_steps": true,
+        "degraded": true,
+        "invariants": true
+      },
+      "draft_deterministic_ok": true,
+      "actual": {
+        "recommendation": "request_info",
+        "risk_rating": "medium",
+        "hits": [],
+        "fired_rules": [
+          "R-DOC-01",
+          "R-JUR-02"
+        ],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve"
+        ],
+        "final_status": "rejected",
+        "summary_by": "llm",
+        "drafted_by": "llm",
+        "missing_documents": [
+          "proof_of_address"
+        ],
+        "missing_doc_draft": "**Subject: Documents Needed for Your Application**\n\nDear Anita Joseph D'Souza,\n\nThank you for submitting your application. To proceed, we need the following document:\n\n- Proof of address\n\nPlease provide this document and send it to [bank contact].\n\nIf you have any questions, please don't hesitate to reach out.\n\nThank you for your attention to this matter.\n\nBest regards,\n[Bank Name]",
+        "extraction_fields_matching_specimen": [
+          6,
+          6
+        ]
+      },
+      "expected": {
+        "recommendation": "request_info",
+        "risk_rating": "high",
+        "hits": [],
+        "fired_rules": [
+          "R-DOC-01",
+          "R-DOC-02",
+          "R-JUR-02"
+        ],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve"
+        ],
+        "final_status": "rejected"
+      },
+      "audit_chain_ok": true,
+      "run": {
+        "seconds": 8.8,
+        "llm_calls": 3,
+        "llm_failures": 0,
+        "tokens": {
+          "input": 792,
+          "output": 375
+        },
+        "kyc_models": [
+          "claude-haiku-4-5"
+        ]
+      }
+    },
+    {
+      "id": "near_miss_dob_mismatch",
+      "pass": true,
+      "checks": {
+        "recommendation": true,
+        "risk_rating": true,
+        "final_status": true,
+        "hits": true,
+        "fired_rules": true,
+        "trajectory": true,
+        "required_steps": true,
+        "degraded": true,
+        "invariants": true
+      },
+      "draft_deterministic_ok": null,
+      "actual": {
+        "recommendation": "manual_review",
+        "risk_rating": "medium",
+        "hits": [
+          [
+            "CDi.011",
+            "possible"
+          ]
+        ],
+        "fired_rules": [
+          "R-SAN-02"
+        ],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "execute"
+        ],
+        "final_status": "approved",
+        "summary_by": "llm",
+        "drafted_by": "llm",
+        "missing_documents": [],
+        "missing_doc_draft": null,
+        "extraction_fields_matching_specimen": [
+          11,
+          11
+        ]
+      },
+      "expected": {
+        "recommendation": "manual_review",
+        "risk_rating": "medium",
+        "hits": [
+          [
+            "CDi.011",
+            "possible"
+          ]
+        ],
+        "fired_rules": [
+          "R-SAN-02"
+        ],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "execute"
+        ],
+        "final_status": "approved"
+      },
+      "audit_chain_ok": true,
+      "run": {
+        "seconds": 10.8,
+        "llm_calls": 3,
+        "llm_failures": 0,
+        "tokens": {
+          "input": 897,
+          "output": 337
+        },
+        "kyc_models": [
+          "claude-haiku-4-5"
+        ]
+      }
+    },
+    {
+      "id": "shared_given_name_no_hit",
+      "pass": true,
+      "checks": {
+        "recommendation": true,
+        "risk_rating": true,
+        "final_status": true,
+        "hits": true,
+        "fired_rules": true,
+        "trajectory": true,
+        "required_steps": true,
+        "degraded": true,
+        "invariants": true
+      },
+      "draft_deterministic_ok": null,
+      "actual": {
+        "recommendation": "approve",
+        "risk_rating": "low",
+        "hits": [],
+        "fired_rules": [],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "execute"
+        ],
+        "final_status": "approved",
+        "summary_by": "llm",
+        "drafted_by": "llm",
+        "missing_documents": [],
+        "missing_doc_draft": null,
+        "extraction_fields_matching_specimen": [
+          11,
+          11
+        ]
+      },
+      "expected": {
+        "recommendation": "approve",
+        "risk_rating": "low",
+        "hits": [],
+        "fired_rules": [],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve",
+          "execute"
+        ],
+        "final_status": "approved"
+      },
+      "audit_chain_ok": true,
+      "run": {
+        "seconds": 9.1,
+        "llm_calls": 2,
+        "llm_failures": 0,
+        "tokens": {
+          "input": 468,
+          "output": 196
+        },
+        "kyc_models": [
+          "claude-haiku-4-5"
+        ]
+      }
+    },
+    {
+      "id": "true_sanctions_hit",
+      "pass": true,
+      "checks": {
+        "recommendation": true,
+        "risk_rating": true,
+        "final_status": true,
+        "hits": true,
+        "fired_rules": true,
+        "trajectory": true,
+        "required_steps": true,
+        "degraded": true,
+        "invariants": true
+      },
+      "draft_deterministic_ok": null,
+      "actual": {
+        "recommendation": "reject",
+        "risk_rating": "high",
+        "hits": [
+          [
+            "CDi.009",
+            "strong"
+          ]
+        ],
+        "fired_rules": [
+          "R-SAN-01"
+        ],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve"
+        ],
+        "final_status": "rejected",
+        "summary_by": "llm",
+        "drafted_by": "llm",
+        "missing_documents": [],
+        "missing_doc_draft": null,
+        "extraction_fields_matching_specimen": [
+          11,
+          11
+        ]
+      },
+      "expected": {
+        "recommendation": "reject",
+        "risk_rating": "high",
+        "hits": [
+          [
+            "CDi.009",
+            "strong"
+          ]
+        ],
+        "fired_rules": [
+          "R-SAN-01"
+        ],
+        "degraded": [],
+        "trajectory": [
+          "intake",
+          "extract",
+          "screen",
+          "assess",
+          "approve"
+        ],
+        "final_status": "rejected"
+      },
+      "audit_chain_ok": true,
+      "run": {
+        "seconds": 9.5,
+        "llm_calls": 2,
+        "llm_failures": 0,
+        "tokens": {
+          "input": 686,
+          "output": 258
+        },
+        "kyc_models": [
+          "claude-haiku-4-5"
+        ]
+      }
+    }
+  ]
+}

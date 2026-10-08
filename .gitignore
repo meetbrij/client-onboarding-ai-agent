@@ -5,6 +5,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .env
+.env*
+!.env.example
 *.db
 .DS_Store
 # Real or scratch documents must never be committed. Fixtures are synthetic text and live in evals/cases/.

@@ -17,6 +17,7 @@ def offline(
 ) -> tuple[Case, Deps, MemoryAuditLog, FakeLlm]:
     case = CASES[case_id]
     env = build_offline_env(llm or FakeLlm(unavailable=case.llm_mode == "unavailable"))
+    assert isinstance(env.llm, FakeLlm)
     return case, env.deps, env.audit, env.llm
 
 

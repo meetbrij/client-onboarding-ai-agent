@@ -146,3 +146,68 @@ class BedrockLlm:
                 if attempt < self.max_attempts:
                     self._sleep(self._wait(attempt))
         raise LlmUnavailable(f"Bedrock still failing after {self.max_attempts} attempts") from last
+
+
+class AnthropicLlm:
+    """The Anthropic Messages API directly. Used while Bedrock quota is unavailable (demo and evals, synthetic data only).
+
+    Same retry policy as BedrockLlm: the SDK's own retries are off so attempts do not multiply. Errors are reported
+    by class only; the SDK message can quote the response body.
+    """
+
+    def __init__(
+        self,
+        model_id: str,
+        api_key: str,
+        client: Any | None = None,
+        max_attempts: int = 5,
+        base_wait_s: float = 1.0,
+        max_wait_s: float = 20.0,
+        sleep: Callable[[float], None] = time.sleep,
+        rng: random.Random | None = None,
+    ) -> None:
+        import anthropic
+
+        self._anthropic = anthropic
+        self.client = client or anthropic.Anthropic(api_key=api_key, max_retries=0, timeout=30.0)
+        self.model_id = model_id
+        self.max_attempts = max_attempts
+        self.base_wait_s = base_wait_s
+        self.max_wait_s = max_wait_s
+        self._sleep = sleep
+        self._rng = rng or random.Random()  # noqa: S311 - jitter, not security
+
+    def _wait(self, attempt: int) -> float:
+        return self._rng.uniform(0, min(self.max_wait_s, self.base_wait_s * (2 ** (attempt - 1))))
+
+    def complete(self, role: str, system: str, user: str, max_tokens: int = 400) -> LlmResult:
+        a = self._anthropic
+        retryable = (a.RateLimitError, a.APIConnectionError, a.InternalServerError)
+        last: Exception | None = None
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                resp = self.client.messages.create(
+                    model=self.model_id,
+                    system=system,
+                    messages=[{"role": "user", "content": user}],
+                    max_tokens=max_tokens,
+                )
+            except retryable as exc:  # includes APITimeoutError (a connection error)
+                last = exc
+                if attempt < self.max_attempts:
+                    self._sleep(self._wait(attempt))
+            except a.AnthropicError as exc:
+                raise LlmUnavailable(f"Anthropic call failed: {type(exc).__name__}") from None
+            else:
+                text = "".join(
+                    getattr(b, "text", "") for b in resp.content if getattr(b, "type", None) == "text"
+                )
+                return LlmResult(
+                    text.strip(),
+                    self.model_id,
+                    int(getattr(resp.usage, "input_tokens", 0)),
+                    int(getattr(resp.usage, "output_tokens", 0)),
+                )
+        raise LlmUnavailable(
+            f"Anthropic still failing after {self.max_attempts} attempts: {type(last).__name__}"
+        ) from None
