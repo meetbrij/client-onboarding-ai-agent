@@ -12,7 +12,7 @@ import yaml
 pytestmark = pytest.mark.skipif(shutil.which("kubectl") is None, reason="kubectl (kustomize) not installed")
 
 ENVS = {"qa": "onboarding-qa", "prod": "onboarding-prod"}
-SECRETS = {"pg-secret", "app-secret", "langfuse-keys"}
+SECRETS = {"pg-secret", "app-secret", "langfuse-keys", "kyc-api-key", "anthropic-api-key"}
 
 
 def render(env: str) -> list[dict]:
@@ -116,7 +116,13 @@ def test_the_api_runs_as_its_irsa_account_in_the_right_mode(env_docs):
     envs = {e["name"]: e for e in next(c for c in spec["containers"] if c["name"] == "api")["env"]}
     assert envs["ENVIRONMENT"]["value"] == env
     assert envs["KYC_BASE_URL"]["value"] == f"http://nodejs-service.{env}.svc.cluster.local"
-    assert envs["LLM_BACKEND"]["value"] == "bedrock" and envs["LLM_ENABLED"]["value"] == "true"
+    assert envs["LLM_BACKEND"]["value"] == "anthropic" and envs["LLM_ENABLED"]["value"] == "true"  # D-26
+    assert envs["ANTHROPIC_MODEL"]["value"] == "claude-haiku-4-5"
+    assert envs["ANTHROPIC_API_KEY"]["valueFrom"]["secretKeyRef"] == {
+        "name": "anthropic-api-key",
+        "key": "ANTHROPIC_API_KEY",
+    }
+    assert envs["KYC_API_KEY"]["valueFrom"]["secretKeyRef"]["name"] == "kyc-api-key"
     assert envs["BEDROCK_MODEL_ID"]["value"].startswith("in.anthropic.")  # India-only profile, never global.
     assert envs["MOCK_BANK_URL"]["value"] == "http://onboarding-mock-bank"
     # tokens and session secret are required (the pod fails closed); Langfuse and the KYC key are optional
@@ -251,3 +257,12 @@ def test_documents_go_to_s3_and_the_bucket_name_is_filled_in_by_the_pipeline(env
         ".github/workflows/qa-cicd.yml" if env == "qa" else ".github/workflows/prod-cd.yaml"
     ).read_text()
     assert f"client-onboarding-docs-$ACCOUNT-{env}-$AWS_REGION" in workflow and "set-by-pipeline" in workflow
+
+
+def test_the_api_key_secrets_are_synced_from_this_environments_own_secrets(env_docs):
+    env, docs = env_docs
+    synced = {
+        d["metadata"]["name"]: d["spec"]["dataFrom"][0]["extract"]["key"] for d in of(docs, "ExternalSecret")
+    }
+    for name in ("kyc-api-key", "anthropic-api-key"):
+        assert synced[name] == f"{env}/onboarding/{name}"  # never the other environment's, never P3's

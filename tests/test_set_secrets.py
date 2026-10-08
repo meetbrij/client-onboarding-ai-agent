@@ -130,6 +130,9 @@ def test_a_fresh_environment_gets_all_three_secrets_with_the_right_shape(aws):
     ]
     assert all(re.fullmatch(r"[0-9a-f]{64}", t["sha256"]) for t in tokens)
     assert aws.value("qa/onboarding/langfuse-keys") == {"LANGFUSE_PUBLIC_KEY": "", "LANGFUSE_SECRET_KEY": ""}
+    assert (
+        "NOT SET   qa/onboarding/kyc-api-key" in r.stdout
+    )  # no key in the environment: nothing is written, nothing guessed
 
 
 def test_the_printed_tokens_match_the_stored_hashes_and_nothing_else_secret_is_printed(aws):
@@ -233,3 +236,25 @@ def test_bad_arguments_are_refused_before_any_aws_call(aws, args):
     r = aws.run(*args)
     assert r.returncode == 2 and aws.puts() == []
     assert not (Path(os.environ.get("FAKE_AWS_DIR", "/nonexistent")) / "calls.log").exists()
+
+
+def test_the_api_keys_come_from_the_environment_and_are_never_printed(aws):
+    r = aws.run("qa", KYC_API_KEY="kyc-key-value-123", ANTHROPIC_API_KEY="anthropic-key-value-456")
+    assert r.returncode == 0
+    assert aws.value("qa/onboarding/kyc-api-key") == {"KYC_API_KEY": "kyc-key-value-123"}
+    assert aws.value("qa/onboarding/anthropic-api-key") == {"ANTHROPIC_API_KEY": "anthropic-key-value-456"}
+    assert (
+        "kyc-key-value-123" not in r.stdout + r.stderr
+        and "anthropic-key-value-456" not in r.stdout + r.stderr
+    )
+
+
+def test_an_existing_api_key_is_not_replaced_without_force(aws):
+    aws.preset("qa/onboarding/kyc-api-key", "v-kyc")
+    r = aws.run("qa", KYC_API_KEY="new-value")
+    assert "SKIPPED   qa/onboarding/kyc-api-key" in r.stdout and aws.value("qa/onboarding/kyc-api-key") == {
+        "ORIGINAL": "keep-me"
+    }
+    r = aws.run("qa", "--force", "kyc-api-key", KYC_API_KEY="new-value")
+    assert "REPLACED  qa/onboarding/kyc-api-key: old version v-kyc" in r.stdout
+    assert aws.value("qa/onboarding/kyc-api-key") == {"KYC_API_KEY": "new-value"}
