@@ -20,6 +20,7 @@ dependencies = [
     "jinja2>=3.1",
     "itsdangerous>=2.2",
     "langfuse>=3.0",
+    "anthropic>=1.12.1",
 ]
 
 [dependency-groups]

@@ -14,7 +14,7 @@ from onboarding.config import Settings
 from onboarding.db import postgres_checkpointer
 from onboarding.documents import DocumentStore, LocalDocumentStore, S3DocumentStore
 from onboarding.graph.nodes import Deps
-from onboarding.llm.client import BedrockLlm, FakeLlm, LlmClient
+from onboarding.llm.client import AnthropicLlm, BedrockLlm, FakeLlm, LlmClient
 from onboarding.llm.prompts import LocalPromptStore, PromptStore
 from onboarding.llm.service import LlmService
 from onboarding.locks import PostgresAdvisoryLocks
@@ -35,6 +35,8 @@ def build_llm(s: Settings) -> LlmClient | None:
         return None
     if s.llm_backend == "bedrock":
         return BedrockLlm(s.bedrock_model_id, s.aws_region, max_attempts=s.llm_retry_attempts)
+    if s.llm_backend == "anthropic":
+        return AnthropicLlm(s.anthropic_model, s.anthropic_api_key or "", max_attempts=s.llm_retry_attempts)
     return FakeLlm()
 
 

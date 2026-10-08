@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from onboarding.audit import MemoryAuditLog
-from onboarding.llm.client import BedrockLlm, FakeLlm, LlmUnavailable
+from onboarding.llm.client import AnthropicLlm, BedrockLlm, FakeLlm, LlmUnavailable
 from onboarding.llm.prompts import LOCAL_VERSION, PROMPT_NAMES, LocalPromptStore
 from onboarding.llm.service import LlmService, check_draft
 from onboarding.models import CaseState
@@ -199,3 +199,78 @@ def test_annotation_is_skipped_for_strong_hits_when_off_and_when_it_names_a_rule
 )
 def test_check_draft(text, missing, ok):
     assert (check_draft(text, missing) is None) is ok
+
+
+class _FakeMessages:
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.requests = []
+
+    def create(self, **request):
+        self.requests.append(request)
+        out = self.outcomes.pop(0)
+        if isinstance(out, Exception):
+            raise out
+        return out
+
+
+class _FakeAnthropicClient:
+    def __init__(self, outcomes):
+        self.messages = _FakeMessages(outcomes)
+
+
+def _reply(text="ok"):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        content=[SimpleNamespace(type="text", text=text)],
+        usage=SimpleNamespace(input_tokens=11, output_tokens=3),
+    )
+
+
+def _status_error(cls):
+    import httpx
+
+    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    return cls(
+        "body with 1990-01-01",
+        response=httpx.Response(429 if "Rate" in cls.__name__ else 400, request=req),
+        body=None,
+    )
+
+
+def test_anthropic_returns_text_and_usage():
+    c = _FakeAnthropicClient([_reply(" hello ")])
+    r = AnthropicLlm("claude-haiku-4-5", "k", client=c).complete("explain", "sys", "usr", max_tokens=50)
+    assert (r.text, r.model_id, r.input_tokens, r.output_tokens) == ("hello", "claude-haiku-4-5", 11, 3)
+    req = c.messages.requests[0]
+    assert req["system"] == "sys" and req["max_tokens"] == 50 and req["messages"][0]["content"] == "usr"
+
+
+def test_anthropic_retries_rate_limits_then_succeeds():
+    import anthropic
+
+    sleeps: list[float] = []
+    c = _FakeAnthropicClient([_status_error(anthropic.RateLimitError), _reply()])
+    llm = AnthropicLlm("m", "k", client=c, sleep=sleeps.append)
+    assert llm.complete("explain", "s", "u").text == "ok" and len(sleeps) == 1
+
+
+def test_anthropic_gives_up_with_the_error_class_only():
+    import anthropic
+
+    c = _FakeAnthropicClient([_status_error(anthropic.RateLimitError)] * 3)
+    llm = AnthropicLlm("m", "k", client=c, max_attempts=3, sleep=lambda _: None)
+    with pytest.raises(LlmUnavailable) as e:
+        llm.complete("explain", "s", "u")
+    assert "RateLimitError" in str(e.value) and "1990" not in str(e.value)
+    assert len(c.messages.requests) == 3
+
+
+def test_anthropic_does_not_retry_a_client_error():
+    import anthropic
+
+    c = _FakeAnthropicClient([_status_error(anthropic.BadRequestError)])
+    with pytest.raises(LlmUnavailable) as e:
+        AnthropicLlm("m", "k", client=c, sleep=lambda _: None).complete("explain", "s", "u")
+    assert "BadRequestError" in str(e.value) and "1990" not in str(e.value) and len(c.messages.requests) == 1
