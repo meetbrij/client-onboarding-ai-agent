@@ -31,4 +31,4 @@ patches:
 images:
   - name: onboarding
     newName: client-onboarding
-    newTag: "43799e77c1cfa28795e632f78cc14d22d60cfbb5"
+    newTag: "5f3f690651d0a332a5af2c3566efa379f049a79f"
