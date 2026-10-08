@@ -5,6 +5,7 @@
 #   scripts/set_secrets.sh qa --dry-run            # show what would happen, change nothing
 #   scripts/set_secrets.sh qa --force app-secret   # replace app-secret (prints the old version id and the roll-back command)
 #   scripts/set_secrets.sh qa --force pg-secret --confirm-pg-secret-overwrite
+#   KYC_API_KEY=... ANTHROPIC_API_KEY=... scripts/set_secrets.sh qa   # the two API keys come from the environment (never an argument)
 #
 # Why: Postgres reads its passwords only when its volume is first created. Overwriting <env>/onboarding/pg-secret later makes
 # the next pod restart or deploy fail to connect (this happened once). The script refuses to do that by accident.
@@ -16,9 +17,9 @@
 set -euo pipefail
 
 REGION="${AWS_REGION:-ap-south-1}"
-SECRETS=(pg-secret app-secret langfuse-keys)
+SECRETS=(pg-secret app-secret langfuse-keys kyc-api-key anthropic-api-key)
 
-usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 [ $# -ge 1 ] || usage 2
 ENV="$1"; shift
@@ -30,7 +31,7 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY=1 ;;
     --confirm-pg-secret-overwrite) CONFIRM_PG=1 ;;
     --force) shift; [ $# -gt 0 ] || { echo "--force needs a secret name" >&2; exit 2; }
-             case "$1" in pg-secret|app-secret|langfuse-keys) FORCE+=("$1") ;; *) echo "unknown secret '$1'" >&2; exit 2 ;; esac ;;
+             case "$1" in pg-secret|app-secret|langfuse-keys|kyc-api-key|anthropic-api-key) FORCE+=("$1") ;; *) echo "unknown secret '$1'" >&2; exit 2 ;; esac ;;
     -h|--help) usage 0 ;;
     *) echo "unknown argument '$1'" >&2; usage 2 ;;
   esac
@@ -71,6 +72,10 @@ write_secret() {  # name, json
     echo "          If you are sure (for example the database does not exist yet), add --confirm-pg-secret-overwrite." >&2
     return 3
   fi
+  if [ -z "$json" ]; then
+    echo "NOT SET   $id: the matching environment variable is empty; export it and run again."
+    return 0
+  fi
   if [ "$DRY" -eq 1 ]; then
     echo "DRY RUN   would write $id${old:+ (replacing version $old)}"
     return 0
@@ -103,6 +108,10 @@ for name in "${SECRETS[@]}"; do
     langfuse-keys)
       json=$(jq -n --arg pub "${LANGFUSE_PUBLIC_KEY:-}" --arg sec "${LANGFUSE_SECRET_KEY:-}" \
         '{LANGFUSE_PUBLIC_KEY:$pub, LANGFUSE_SECRET_KEY:$sec}') ;;
+    kyc-api-key)
+      json=""; [ -n "${KYC_API_KEY:-}" ] && json=$(jq -n --arg k "$KYC_API_KEY" '{KYC_API_KEY:$k}') ;;
+    anthropic-api-key)
+      json=""; [ -n "${ANTHROPIC_API_KEY:-}" ] && json=$(jq -n --arg k "$ANTHROPIC_API_KEY" '{ANTHROPIC_API_KEY:$k}') ;;
   esac
   write_secret "$name" "$json" || status=$?
 done

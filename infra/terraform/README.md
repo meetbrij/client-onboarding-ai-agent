@@ -13,7 +13,7 @@ needs your credentials, so it is yours to run.
 | Stack | Resources |
 |---|---|
 | `platform/` | ECR repository `client-onboarding` (immutable tags, scan on push, lifecycle policy); ACM certificate for `qa-proj4-onboarding.<zone>` and `proj4-onboarding.<zone>` with DNS validation records in the existing zone |
-| `envs/qa/`, `envs/prod/` (module `onboarding-env`) | S3 bucket `client-onboarding-docs-<account>-<env>-<region>` for the original documents (private, AES-256, TLS-only, lifecycle expiry; the API role can read, write and delete objects in it); Namespace `onboarding-qa` / `onboarding-prod` with quota and limit range; three Secrets Manager secret shells (`<env>/onboarding/pg-secret`, `app-secret`, `langfuse-keys`); External Secrets IAM role and `eso` service account; Bedrock IAM role and `onboarding-api` service account (IRSA, only the listed inference profile and its underlying models); GitHub Actions deploy role (qa: `ref:refs/heads/qa`, prod: `environment:prod`) with an EKS access entry scoped to the namespace; optional Route 53 alias to the shared ALB |
+| `envs/qa/`, `envs/prod/` (module `onboarding-env`) | S3 bucket `client-onboarding-docs-<account>-<env>-<region>` for the original documents (private, AES-256, TLS-only, lifecycle expiry; the API role can read, write and delete objects in it); Namespace `onboarding-qa` / `onboarding-prod` with quota and limit range; five Secrets Manager secret shells (`<env>/onboarding/pg-secret`, `app-secret`, `langfuse-keys`, `kyc-api-key`, `anthropic-api-key`); External Secrets IAM role and `eso` service account; Bedrock IAM role and `onboarding-api` service account (IRSA, only the listed inference profile and its underlying models); GitHub Actions deploy role (qa: `ref:refs/heads/qa`, prod: `environment:prod`) with an EKS access entry scoped to the namespace; optional Route 53 alias to the shared ALB |
 
 What it reads and does not touch: the cluster `devsecops-eks`, its OIDC provider and the GitHub OIDC provider, the Route 53 hosted
 zone, the External Secrets and AWS Load Balancer controllers, the `ebs-sc` and `ebs-sc-retain` StorageClasses.
@@ -51,6 +51,11 @@ Use the script. It fills the secrets that are still empty and **refuses to overw
 scripts/set_secrets.sh qa --dry-run     # shows what it would do, changes nothing
 scripts/set_secrets.sh qa               # writes pg-secret, app-secret and langfuse-keys where they are empty
 scripts/set_secrets.sh prod             # the same for prod, with its own fresh values
+
+# The two API keys (P3's KYC key for that environment, and an Anthropic key for our advisory LLM) come from the environment, never an argument.
+# They are written only if the variable is set and the secret is still empty. Anthropic route: synthetic data only (D-26).
+set -a; source .env.eval; set +a        # or export KYC_API_KEY and ANTHROPIC_API_KEY yourself
+scripts/set_secrets.sh qa               # writes kyc-api-key and anthropic-api-key; skips everything that already has a value
 ```
 
 - It prints the sign-in tokens for `officer-1`, `officer-2` and `submitter-1` **once**, when it writes `app-secret`. Save them: only their hashes are stored.
