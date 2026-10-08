@@ -20,3 +20,5 @@ gitleaks-report.json
 *.tfvars
 !*.tfvars.example
 backend.hcl
+# Personal, per-machine Claude Code notes: never commit
+CLAUDE.local.md
