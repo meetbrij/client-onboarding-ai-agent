@@ -21,9 +21,11 @@ class Settings:
     kyc_base_url: str = "http://localhost:8002"
     kyc_api_key: str | None = None
     mock_bank_url: str = "http://localhost:8001"
-    llm_backend: str = "fake"  # fake | bedrock
+    llm_backend: str = "fake"  # fake | bedrock | anthropic
     llm_enabled: bool = True  # the kill switch: false uses templates only
     annotate_hits: bool = True
+    anthropic_model: str = "claude-haiku-4-5"
+    anthropic_api_key: str | None = None
     bedrock_model_id: str = ""  # a model id or a cross-region inference profile id
     aws_region: str = "ap-south-1"
     prompt_label: str = "production"  # Langfuse prompt label: production | staging
@@ -60,6 +62,8 @@ class Settings:
             llm_backend=e.get("LLM_BACKEND", "fake"),
             llm_enabled=_bool(e.get("LLM_ENABLED"), True),
             annotate_hits=_bool(e.get("ANNOTATE_HITS"), True),
+            anthropic_model=e.get("ANTHROPIC_MODEL", "claude-haiku-4-5"),
+            anthropic_api_key=e.get("ANTHROPIC_API_KEY") or None,
             bedrock_model_id=e.get("BEDROCK_MODEL_ID", ""),
             aws_region=e.get("AWS_REGION", "ap-south-1"),
             prompt_label=e.get("PROMPT_LABEL", "production"),
@@ -85,8 +89,10 @@ class Settings:
     def validate(self) -> None:
         if self.environment not in {"dev", "test", "qa", "prod"}:
             raise ConfigError(f"ENVIRONMENT must be dev, test, qa or prod, not {self.environment!r}")
-        if self.llm_backend not in {"fake", "bedrock"}:
-            raise ConfigError("LLM_BACKEND must be fake or bedrock")
+        if self.llm_backend not in {"fake", "bedrock", "anthropic"}:
+            raise ConfigError("LLM_BACKEND must be fake, bedrock or anthropic")
+        if self.llm_backend == "anthropic" and self.llm_enabled and not self.anthropic_api_key:
+            raise ConfigError("ANTHROPIC_API_KEY is required when LLM_BACKEND=anthropic")
         if self.llm_backend == "bedrock" and self.llm_enabled and not self.bedrock_model_id:
             raise ConfigError("BEDROCK_MODEL_ID is required when LLM_BACKEND=bedrock")
         if self.environment == "prod" and self.llm_backend == "fake":

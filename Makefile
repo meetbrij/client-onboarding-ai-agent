@@ -11,11 +11,11 @@ lint:
 check:
 	uv run ruff check .
 	uv run ruff format --check .
-	uv run mypy app tests scripts
+	uv run mypy app tests scripts evals
 	uv run python -m onboarding.graph.build --all
 
 typecheck:
-	uv run mypy app tests scripts
+	uv run mypy app tests scripts evals
 up:
 	docker compose up -d --build
 down:
