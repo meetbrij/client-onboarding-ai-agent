@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude Code in this repository. Status (2026-10-07): **Phases 1 to 4 done and deployed to `qa` and `prod` on EKS via the pipelines; evals (3b) blocked on Bedrock quota; Phase 5 not started.** The workflow (intake to execute, officer pause, document loop, crash-safe resume), Postgres checkpointer, hash-chained audit log, API, officer UI, document store, Langfuse tracing and prompt management are built. Bedrock and Langfuse Cloud have not been called for real (zero quota, no keys): they are tested with the real SDK against an in-memory exporter, and with stubs. See `docs/PLAN.md` "Where things stand".
+Guidance for Claude Code in this repository. Status (2026-10-08): **All phases done. Deployed to `qa` and `prod` on EKS via the pipelines; first live eval (2026-10-08) passed 10 of 12 cases (`evals/results/2026-10-08-live.json`); README numbers are checked by `scripts/check_numbers.py`.** The workflow (intake to execute, officer pause, document loop, crash-safe resume), Postgres checkpointer, hash-chained audit log, API, officer UI, document store, Langfuse tracing and prompt management are built. Bedrock and Langfuse Cloud have not been called for real (zero quota, no keys); the live eval used the Anthropic API (D-26, synthetic data only): they are tested with the real SDK against an in-memory exporter, and with stubs. See `docs/PLAN.md` "Where things stand".
 Build phase by phase as in `docs/PLAN.md`; decisions in `docs/DECISIONS.md` are accepted unless marked otherwise.
 
 ## Purpose
@@ -40,7 +40,7 @@ app/mock_bank/         separate small FastAPI service (same image, different com
 data/sanctions/        dated snapshot + manifest (source, date, sha256); scripts/load_sanctions.py builds the index
 data/reference/        high-risk jurisdictions and occupations (dated, sourced)
 prompts/               local fallback copies of the Langfuse prompts
-evals/                 cases/*.yaml, run.py, metrics.py, judge.py, results/<date>.json
+evals/                 cases/*.yaml, run.py, metrics.py, judge.py, specimen.py, thresholds.yaml, results/<date>-live.json
 k8s/{qa,prod}/         kustomize, P3 pattern     infra/terraform/   our own stack on P3's cluster (D-03, D-10)
 .github/workflows/     copied and adapted from P3
 Dockerfile  docker-compose.yml  pyproject.toml  tests/  (incl. API-to-mock-bank contract test)
@@ -56,8 +56,10 @@ uv run python scripts/load_sanctions.py      # rebuild index from data/sanctions
 uv run pytest                                # offline; set MOCK_BANK_TEST_DATABASE_URL (compose postgres) to include the Postgres race test
 uv run python scripts/make_fixtures.py       # regenerate evals/cases/*.yaml (committed; tests check them against the snapshot)
 make check                                   # ruff check, ruff format --check, mypy and the fixture run: what CI runs. Run it BEFORE every push
-# evals are deferred until P3's KYC service is live (D-15, Phase 3b):
-uv run python -m evals.run --live            # live KYC + Bedrock + Langfuse; writes evals/results/<date>.json
+make evals                                   # deterministic eval gate (no network); also part of pytest
+# live eval: put KYC_API_KEY and ANTHROPIC_API_KEY in .env.eval (git-ignored), then `set -a; source .env.eval; set +a`
+uv run python -m evals.run --live --kyc-url https://<P3 KYC host>   # writes evals/results/<date>-live.json
+uv run python scripts/check_numbers.py       # README evaluation numbers must come from the latest live result
 uv run python -m onboarding.audit verify     # verify_audit_chain against $DATABASE_URL: exit 1 and the first broken row on a break
 uv run python -m onboarding.graph.build --all   # offline: all 12 fixtures end to end (scripted officer), compared with their expectations
 uv run python -m onboarding.db migrate       # needs OWNER_DATABASE_URL and APP_DB_ROLE; `purge` deletes old checkpoints

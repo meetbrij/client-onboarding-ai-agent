@@ -2,7 +2,7 @@
 
 An agentic onboarding workflow for a bank-style client application: LangGraph, a KYC extraction tool, sanctions screening, deterministic risk rules, a **human approval gate**, and an idempotent call to a mock core-banking API. Every step leaves an entry in a tamper-evident, append-only audit log. It runs on AWS EKS through GitHub Actions with approval-gated promotion.
 
-> **Status (2026-10-07): built, deployed to `qa` and `prod` on EKS through the GitHub Actions pipeline, and used by hand. Not yet evaluated.** Phases 1 to 4 are done: the full workflow, the officer UI, the audit chain, the document store, Terraform, manifests and the QA and prod pipelines (QA runs green on every merge; the first prod run was approved and succeeded once the prod stack existed). **Evals have not been run, so this README contains no performance numbers**, and none will appear until they come from a file committed in `evals/results/`. The blocker is Bedrock quota in the AWS account (zero for Anthropic models today): live extraction, live LLM wording and the evals wait on it, and the cases show "extraction unavailable" until it is raised. Details and the plan are in [docs/PLAN.md](docs/PLAN.md); accepted gaps are in [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md).
+> **Status (2026-10-08): built, deployed to `qa` and `prod` on EKS through the GitHub Actions pipeline, used by hand, and evaluated once against the live KYC service.** The full workflow, the officer UI, the audit chain, the document store, Terraform, manifests and both pipelines are done. The first live evaluation (12 synthetic cases, 2026-10-08) passed **10 of 12**; the two misses are explained under [Evaluation](#evaluation) and are a finding about the test inputs, not a workflow fault. The model API behind both the KYC service and our advisory LLM is currently the **Anthropic API, for synthetic data only**, because the Bedrock quota in the AWS account is zero; Bedrock remains the target for any real deployment (see [docs/MODEL_INVENTORY.md](docs/MODEL_INVENTORY.md)). Every number here comes from [evals/results/2026-10-08-live.json](evals/results/2026-10-08-live.json) and is checked by `scripts/check_numbers.py`. Plan: [docs/PLAN.md](docs/PLAN.md); accepted gaps: [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md).
 
 ## Intro
 
@@ -14,7 +14,7 @@ It is a portfolio project for Forward Deployed AI Engineer roles in the UAE. It 
 
 ## What we will build
 
-Nine steps. The compliance officer is in the loop at step 5. Steps 1 to 7 and 9 are built and deployed; step 8 (evals) is designed and waiting for Bedrock quota.
+Nine steps. The compliance officer is in the loop at step 5. All nine are built; step 8 (evals) has run once against the live KYC service and runs on every push as a deterministic gate.
 
 | # | Step | What happens |
 |---|---|---|
@@ -25,7 +25,7 @@ Nine steps. The compliance officer is in the loop at step 5. Steps 1 to 7 and 9 
 | 5 | **Approve** | The workflow pauses at a LangGraph `interrupt()`. The officer sees facts, hits with reasons, fired rules and a recommendation with an explanation, then chooses approve, reject or request more info. The decision resumes the graph from the checkpoint. "Request more info" loops back to intake when the documents arrive. |
 | 6 | **Execute** | On approval, a mock core-banking API creates the customer record. The call is idempotent, with `case_id` as the idempotency key. |
 | 7 | **Audit** | Every step, model call (prompt name and version, model id, token counts), tool call, rule result and human decision is appended to a hash-chained audit log. |
-| 8 | **Evals** | 12 synthetic cases with expected outcomes score the final recommendation and the trajectory. Traced in Langfuse, with prompts versioned there. *Not run yet: waits for Bedrock quota so the live KYC service works; see [docs/EVALS.md](docs/EVALS.md). The same 12 cases already run offline as a regression test (`python -m onboarding.graph.build --all`), which is not an evaluation of extraction or of the model.* |
+| 8 | **Evals** | 12 synthetic cases with expected outcomes score the final recommendation, risk rating, sanctions hits and trajectory. A deterministic run (recorded KYC responses, fake LLM) is a CI gate with exact thresholds; a live run (real KYC service, real LLM, SPECIMEN images) was done on 2026-10-08: 10 of 12 cases pass. See [Evaluation](#evaluation) and [docs/EVALS.md](docs/EVALS.md). |
 | 9 | **Deploy** | To P3's EKS cluster (`qa`, then approval-gated `prod`) using a copy of P3's GitHub Actions pipeline. *Done: both environments run from the pipeline.* |
 
 ### Workflow
@@ -58,7 +58,7 @@ Two services built into **one container image**, run as two Deployments with dif
 | Mock core-banking | A separate small FastAPI service; creates a customer record, idempotent on `Idempotency-Key` (UNIQUE constraint; a different payload under the same key returns 409) |
 | State and audit | PostgreSQL: LangGraph checkpoints (own schema, `thread_id = case_id`) and the `audit_log` table |
 | Original documents | A private, encrypted S3 bucket per environment (a local folder in development), opened only by officers through the API, every view audited (D-24) |
-| LLM | Claude Haiku 4.5 on Amazon Bedrock, accessed with IRSA. Prompts are managed in Langfuse, with a local fallback copy |
+| LLM | Claude Haiku 4.5. Target: Amazon Bedrock with IRSA. Today (quota is zero): the Anthropic API directly (`LLM_BACKEND=anthropic`), synthetic data only. Prompts are managed in Langfuse, with a local fallback copy |
 | KYC extraction | The existing P3 service, called over HTTP as a tool |
 | Officer UI | Server-rendered pages with a strict Content Security Policy (`script-src 'self'`, one small script that only shows a busy state on slow forms); values rendered as text only |
 
@@ -247,7 +247,7 @@ flowchart TD
     N --> O[Deploy to onboarding-prod, wait for rollout] --> P([Live])
 ```
 
-Principles carried over from P3: build once and promote the artifact (retag, never rebuild); immutable SHA-tagged images, never `latest`; separate QA and prod roles that cannot assume each other; approval before prod. Branches: `feature/*` to `qa` to `main`. A deterministic eval gate joins the pipeline once the evals exist (Phase 3b).
+Principles carried over from P3: build once and promote the artifact (retag, never rebuild); immutable SHA-tagged images, never `latest`; separate QA and prod roles that cannot assume each other; approval before prod. Branches: `feature/*` to `qa` to `main`. The deterministic eval run is part of the test suite, so it gates every pipeline.
 
 **What the pipeline does and does not enforce today.** It runs Gitleaks (blocks), Checkov, Trivy (filesystem and image), an SBOM, lint, types, the full test suite with a Postgres service and the 12-fixture run (lint and tests block the build). Checkov and Trivy are **report-only** (`ENFORCE_SCANS: "false"`, as in P3): a local run found 44 HIGH and 0 CRITICAL findings in the Debian base image and 18 and 7 Checkov findings, listed with reasons in [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md). SonarCloud is off until `SONAR_ENABLED=true`. After a QA deploy a smoke test submits one synthetic case. The prod run waits for a reviewer on the GitHub Environment `prod`, retags the QA image (same digest) and deploys it.
 
@@ -284,7 +284,7 @@ pipeline commits the deployed image tag back to it, as in P3); block force-push 
 
 ## Controls
 
-The design is mapped to the CBUAE *Guidance Note on the Consumer Protection and Responsible Adoption and Use of AI and ML by Licensed Financial Institutions* in [docs/CONTROLS.md](docs/CONTROLS.md): human oversight (no auto-approval path), explainability (rules and match reasons), auditability (hash-chained log), model inventory ([docs/MODEL_INVENTORY.md](docs/MODEL_INVENTORY.md): the LLM roles and the deterministic components are listed; evaluation results and the owner are pending), third-party accountability (Bedrock, Langfuse), audited and officer-only access to original documents, and data protection under the UAE PDPL, including what changes for a production deployment in `me-central-1`.
+The design is mapped to the CBUAE *Guidance Note on the Consumer Protection and Responsible Adoption and Use of AI and ML by Licensed Financial Institutions* in [docs/CONTROLS.md](docs/CONTROLS.md): human oversight (no auto-approval path), explainability (rules and match reasons), auditability (hash-chained log), model inventory ([docs/MODEL_INVENTORY.md](docs/MODEL_INVENTORY.md): the LLM roles and the deterministic components are listed; evaluation results are linked; the owner is still to be named), third-party accountability (Bedrock, Langfuse), audited and officer-only access to original documents, and data protection under the UAE PDPL, including what changes for a production deployment in `me-central-1`.
 
 **Caveat:** the official CBUAE text could not be fetched, so the controls table cites topics, not clause numbers, until the PDF is supplied. This is an engineering mapping, not a compliance attestation.
 
@@ -292,7 +292,28 @@ The design is mapped to the CBUAE *Guidance Note on the Consumer Protection and 
 
 Twelve synthetic cases covering a clean approval, a true sanctions hit, a DOB-mismatch false positive, missing and low-confidence documents, high-risk jurisdiction and occupation, multiple issues, and the KYC service and the LLM being unavailable. Scored on recommendation, risk rating, sanctions recall and precision, and trajectory (exact match and required steps present), plus an LLM-judged rubric for missing-document drafts reported separately. Details, rubric and quota handling are in [docs/EVALS.md](docs/EVALS.md).
 
-**Results: none yet.** The eval phase starts when P3's KYC service works end to end (its Bedrock quota is currently zero). With only 12 cases the metrics will be illustrative, not statistical, and extraction quality is not measured until the evals run against the live service.
+<!-- numbers:start -->
+**Results of the first live run (2026-10-08, git `40a4e58`).** KYC extraction: P3's service on `claude-haiku-4-5` (Anthropic API). Our advisory LLM: `claude-haiku-4-5`. Judge: `claude-sonnet-5-5`. Documents: SPECIMEN PNG images generated from the fixtures. Sanctions snapshot: UN, 2026-10-03. Raw data: [evals/results/2026-10-08-live.json](evals/results/2026-10-08-live.json).
+
+| Metric | Result |
+|---|---|
+| Cases passing every check | 10/12 |
+| Recommendation accuracy | 11/12 |
+| Risk-rating accuracy | 10/12 |
+| Fired-rules set match | 10/12 |
+| Final-status accuracy | 12/12 |
+| Trajectory exact match | 12/12 |
+| Degrade correctness (KYC down, LLM down) | 12/12 |
+| Invariants (no execute without a human approval; audit chain verifies) | 12/12 |
+| Sanctions hits found / expected | 3/3, with 0 false positives |
+| Missing-document drafts passing the deterministic checks | 2/2 |
+| Missing-document drafts scored by the judge (rubric v1, 5 criteria, max 10) | 2 drafts, both 10/10 |
+| Live KYC fields read correctly on the specimens | 111/111 |
+
+**The two misses** (`low_confidence_extraction`, `multiple_issues`) expect the rule R-DOC-02, "fields flagged low confidence". The specimens were blurred and rotated on purpose, but Claude Haiku 4.5 read them all correctly (111 of 111 fields), so nothing was flagged, the rule did not fire, and the rating and recommendation followed the input it got. The workflow behaved correctly; the test inputs were easier than the fixtures assume. The cases were not changed after seeing the result, because that would be tuning to the test. The same rule is covered deterministically by the recorded-response run, which passes 12/12 and gates CI.
+
+**What this does and does not show.** Twelve cases are illustrative, not statistical; the judge scored only two drafts; one run, one model. The sanctions result covers three expected hits. Extraction quality was measured only on clean synthetic specimens. Langfuse dataset linking was not used in this run. No claim here is about real documents, real populations or compliance.
+<!-- numbers:end -->
 
 ## Repository Layout
 
@@ -316,7 +337,7 @@ Dockerfile  docker-compose.yml  pyproject.toml  tests/
 
 ## Local Development
 
-*Works now: everything below, including the full stack in Docker Compose with the officer UI. Not yet: the evals (Phase 3b).*
+*Works now: everything below, including the full stack in Docker Compose with the officer UI and the evals (`make evals`, `python -m evals.run`).*
 
 ```bash
 make setup                                   # uv sync, pre-commit, copy .env.example to .env
@@ -330,7 +351,7 @@ DATABASE_URL=postgresql+psycopg://onboarding_app:onboarding-app-local@localhost:
   uv run python -m onboarding.audit verify   # prove the audit chain in the compose database; non-zero exit on a break
 ```
 
-Local runs need no AWS: the compose stack uses a fake KYC service and a fake LLM, so the whole workflow can be exercised and the officer pages opened at `http://localhost:8000/ui`. Local development tokens (dev only; qa and prod refuse to start without real ones): `dev-submitter-token` (submitter-1), `dev-officer-token` (officer-1), `dev-officer2-token` (officer-2). Submit as the submitter and decide as an officer: nobody decides a case they submitted. To use real Bedrock, set `AWS_PROFILE`, `AWS_REGION` and `BEDROCK_MODEL_ID` (default: the Haiku 4.5 inference profile, which must be enabled in your account and have quota). To trace, set the Langfuse keys. Use synthetic data only; never put a real person's details into a case.
+Local runs need no AWS: the compose stack uses a fake KYC service and a fake LLM, so the whole workflow can be exercised and the officer pages opened at `http://localhost:8000/ui`. Local development tokens (dev only; qa and prod refuse to start without real ones): `dev-submitter-token` (submitter-1), `dev-officer-token` (officer-1), `dev-officer2-token` (officer-2). Submit as the submitter and decide as an officer: nobody decides a case they submitted. To use the Anthropic API instead, set `LLM_BACKEND=anthropic` and `ANTHROPIC_API_KEY` (synthetic data only). To use real Bedrock, set `AWS_PROFILE`, `AWS_REGION` and `BEDROCK_MODEL_ID` (default: the Haiku 4.5 inference profile, which must be enabled in your account and have quota). To trace, set the Langfuse keys. Use synthetic data only; never put a real person's details into a case.
 
 Settings are environment variables (documented in `.env.example`): database URL, KYC base URL and API key, mock-bank URL, `BEDROCK_MODEL_ID`, `AWS_REGION`, `LLM_ENABLED`, Langfuse host and keys, `OTEL_EXPORTER_OTLP_ENDPOINT`, `MAX_INFO_ROUNDS`.
 
@@ -344,9 +365,9 @@ Settings are environment variables (documented in `.env.example`): database URL,
 
 The full list with reasons is [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md). The ones that matter most:
 
-- **Bedrock quota (the critical path):** the AWS account used by P3 has per-minute quota 0 for Anthropic models, so P3's KYC service cannot extract (cases show "extraction unavailable", and approval is blocked until an officer rejects or asks for more information), live LLM wording falls back to templates, and the evals cannot run. The workflow degrades as designed; this is a dependency, not a defect. The cause was inferred from P3's notes and has not been confirmed in the KYC service's logs.
-- **No evaluation yet:** no accuracy, recall or trajectory numbers exist. The 12 fixture cases pass as a regression test; that is not an evaluation.
-- **Bedrock and Langfuse Cloud were never called for real** (no quota, no project keys). The code is tested with stubs and the real Langfuse SDK against an in-memory exporter.
+- **Bedrock quota is zero in the AWS account.** To get evaluated and demonstrated, the KYC service and our advisory LLM both call the Anthropic API directly (D-26). That route sends documents and prompts to a third party and is acceptable only because every document is synthetic and marked SPECIMEN; it is not suitable for real customer data. Bedrock is a one-line configuration switch on both sides and has not run end to end here.
+- **One live evaluation, 12 cases:** see the caveats under Evaluation. Extraction accuracy was measured only on clean specimens; adversarial and genuinely poor documents are untested.
+- **Bedrock and Langfuse Cloud were never called for real** (no quota, no project keys). The code is tested with stubs and the real Langfuse SDK against an in-memory exporter. The deployed QA and prod environments do not yet have the KYC API key or an Anthropic key, so deployed cases still show "extraction unavailable"; the live evaluation ran from a laptop.
 - **Scans report only** (as in P3); see CI/CD above for what is and is not enforced.
 - **CBUAE text:** see Controls. Topics only, no clause numbers, until the PDF is supplied.
 - **Matching scope:** a demo-scale fuzzy scorer, not a screening-vendor replacement; a middle name left out can slip under the threshold, and transliterated names can raise false positives.
@@ -362,7 +383,8 @@ The full list with reasons is [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS
 | [docs/PLAN.md](docs/PLAN.md) | Phases with "done when" checks, resume-claim mapping, cut list, demo script |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Every decision, what was reused from P3 and MIA, status |
 | [docs/CONTROLS.md](docs/CONTROLS.md) | CBUAE guidance mapping, gaps, PDPL and UAE region notes |
-| [docs/EVALS.md](docs/EVALS.md) | The 12 cases, metrics, rubric, quota design |
+| [docs/EVALS.md](docs/EVALS.md) | The 12 cases, metrics, rubric, how to run the deterministic and live evals |
+| [docs/DEMO.md](docs/DEMO.md) | A two-minute demo script |
 | [docs/MODEL_INVENTORY.md](docs/MODEL_INVENTORY.md) | The LLM roles, prompts, the deterministic decision components, third-party services |
 | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | Accepted gaps, kept honest |
 | [infra/terraform/README.md](infra/terraform/README.md) | Applying the infrastructure, setting secrets, GitHub settings, recovery |
@@ -378,8 +400,8 @@ The full list with reasons is [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS
 | 3 | Approval interrupt, checkpointer and resume, execute, officer UI, Langfuse | done |
 | 4 | Image, manifests, own Terraform stack, pipelines, qa then prod | **done**: both environments deployed through the pipelines |
 | 4+ | Fixes and additions found in use: non-blocking API, busy state in the UI, officer access to original documents (D-24), `make check`, safe secret setting | done |
-| 3b | Evals against the live KYC service | **blocked on Bedrock quota** |
-| 5 | Real eval numbers, controls evidence and screenshots, model inventory, demo clip | not started; the parts that need numbers wait for 3b |
+| 3b | Evals against the live KYC service | **done** (2026-10-08): 10 of 12 |
+| 5 | Real eval numbers, controls evidence, model inventory, demo script | **done**; screenshots and a recorded clip not made |
 
 ## License
 

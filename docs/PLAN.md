@@ -3,7 +3,7 @@
 Five phases. Each has a "done when" check that someone else could run. Decisions marked D-nn are in `DECISIONS.md`; each says whether it is
 Accepted or still Proposed.
 
-## Where things stand (2026-10-07)
+## Where things stand (2026-10-08)
 
 | Phase | State | Evidence |
 |---|---|---|
@@ -13,13 +13,11 @@ Accepted or still Proposed.
 | 3 Approval, resume, execute, API, UI, Langfuse | done | Phase 3 results below |
 | 4 Image, manifests, Terraform, pipelines, qa and prod | **done** (deployed) | QA pipeline runs on `qa` are green (GitHub Actions); the first prod run was approved and succeeded after the prod stack existed; the owner submitted and approved a case on the prod URL and used QA by hand, including opening original documents as an officer. The owner's hands-on checks are reported by the owner, not re-run here. |
 | 4+ Fixes and additions found in use | done | non-blocking API (a blocked event loop restarted the pod), busy state in the UI, officer access to original documents (D-24), `make check`, `scripts/set_secrets.sh` (D-25) |
-| 3b Evals | **blocked** | Bedrock quota is zero in the account, so P3's KYC service cannot extract and the LLM falls back to templates; no eval has been run and no numbers exist |
-| 5 README numbers, controls evidence, screenshots, demo | not started | the parts needing numbers wait for 3b |
+| 3b Evals | **done** | first live run 2026-10-08: 10 of 12 cases pass; `evals/results/2026-10-08-live.json`; harness `evals/`; deterministic gate in the test suite |
+| 5 README numbers, controls evidence, model inventory, demo | **done** | README Evaluation block checked by `scripts/check_numbers.py`; CONTROLS evidence table; MODEL_INVENTORY; `docs/DEMO.md`. Not made: screenshots, a recorded clip |
 
-**Next, in order:** (1) request the Bedrock quota increase (the critical path, days of lead time); (2) meanwhile finish deployment housekeeping:
-Langfuse project and keys, `sync_prompts.py`, enabling P3's KYC API key, restoring the QA secrets (see D-25 and `infra/terraform/README.md`), SonarCloud if wanted;
-(3) decide on an audited "manually verified" attestation that would let an officer approve when extraction is unavailable (proposed, not built);
-(4) Phase 3b evals once quota lands; (5) Phase 5.
+**Remaining, none blocking:** add `KYC_API_KEY` and an Anthropic key to the deployed environments so deployed cases extract (needs a secrets-script option and a manifest change, see KNOWN_LIMITATIONS); Langfuse project, keys, `sync_prompts.py` and dataset linking;
+the "manually verified" attestation (decided: not built); screenshots and a clip; Bedrock quota and a Bedrock run of the same evals; CBUAE headings once the PDF is supplied.
 
 ## Scope in one paragraph
 Nine-step workflow: intake, extract (P3 KYC over HTTP), screen (vendored UN snapshot), assess (Python rules), approve
