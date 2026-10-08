@@ -1,0 +1,17 @@
+# The deterministic metrics must be exact: inputs are fixed, so any drop is a regression (docs/EVALS.md).
+# Do not loosen a value to make a run pass without a DECISIONS entry. The deterministic run (CI) fails below these.
+# The live run reports against the same file but never fails the command: a live service may read a document differently,
+# and that is a finding to report, not a regression to hide.
+recommendation_accuracy: 1.0
+risk_rating_accuracy: 1.0
+final_status_accuracy: 1.0
+fired_rules_match: 1.0
+trajectory_exact: 1.0
+required_steps_present: 1.0
+degrade_correctness: 1.0
+invariants: 1.0
+sanctions_recall: 1.0
+sanctions_precision: 1.0
+sanctions_recall_strong: 1.0
+sanctions_precision_strong: 1.0
+draft_deterministic_checks: 1.0

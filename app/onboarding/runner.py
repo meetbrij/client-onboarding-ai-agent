@@ -8,8 +8,9 @@ checkpointer. The officer's and the client's later steps come from the fixture's
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -24,11 +25,11 @@ from mock_bank.main import metadata as bank_metadata
 from onboarding.audit import AuditRow, AuditSink, MemoryAuditLog
 from onboarding.decision import DecisionRequest
 from onboarding.documents import DocumentStore, MemoryDocumentStore
-from onboarding.fixtures import Case, load_cases
+from onboarding.fixtures import Case, CaseDocument, load_cases
 from onboarding.graph import names
 from onboarding.graph.nodes import Deps
 from onboarding.graph.serde import checkpoint_serde
-from onboarding.llm.client import FakeLlm
+from onboarding.llm.client import FakeLlm, LlmClient, LlmResult
 from onboarding.llm.prompts import LocalPromptStore
 from onboarding.llm.service import LlmService
 from onboarding.locks import LocalLocks
@@ -48,10 +49,45 @@ OFFICER = "officer-eval"
 
 
 @dataclass
+class RecordingLlm:
+    """Wraps a real model client for live evals: counts calls, tokens and failures. Errors still propagate (the
+    service turns them into template fallbacks)."""
+
+    inner: LlmClient
+    calls: list[tuple[str, str, str]] = field(default_factory=list)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    failures: int = 0
+
+    @property
+    def model_id(self) -> str:
+        return str(getattr(self.inner, "model_id", "unknown"))
+
+    def complete(self, role: str, system: str, user: str, max_tokens: int = 400) -> LlmResult:
+        self.calls.append((role, system, user))
+        try:
+            r = self.inner.complete(role, system, user, max_tokens)
+        except Exception:
+            self.failures += 1
+            raise
+        self.input_tokens += r.input_tokens
+        self.output_tokens += r.output_tokens
+        return r
+
+
+# (case, document) -> (bytes, file name). The offline default sends the fixture's text; live evals send an image.
+DocFactory = Callable[[Case, CaseDocument], tuple[bytes, str]]
+
+
+def text_document(_case: Case, doc: CaseDocument) -> tuple[bytes, str]:
+    return doc.content.encode(), "specimen.txt"
+
+
+@dataclass
 class OfflineEnv:
     service: CaseService
     audit: MemoryAuditLog
-    llm: FakeLlm
+    llm: FakeLlm | RecordingLlm
     deps: Deps
     stack: ExitStack
 
@@ -59,9 +95,18 @@ class OfflineEnv:
         self.stack.close()
 
 
-def build_deps(audit: AuditSink, llm: FakeLlm, stack: ExitStack, max_info_rounds: int = 2) -> Deps:
-    """Dependencies with the fake KYC service, the mock bank on an in-memory database, and a fake LLM."""
-    kyc_http = stack.enter_context(TestClient(create_fake_kyc(ROOT / "evals" / "cases")))
+def build_deps(
+    audit: AuditSink,
+    llm: FakeLlm | RecordingLlm,
+    stack: ExitStack,
+    max_info_rounds: int = 2,
+    kyc: KycClient | None = None,
+) -> Deps:
+    """Dependencies with the fake KYC service (unless `kyc` is given), the mock bank on an in-memory database,
+    and the given LLM."""
+    if kyc is None:
+        kyc_http = stack.enter_context(TestClient(create_fake_kyc(ROOT / "evals" / "cases")))
+        kyc = KycClient(client=kyc_http, sleep=lambda _s: None)  # type: ignore[arg-type]  # TestClient is an httpx.Client
     bank_engine = create_engine(
         "sqlite+pysqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
     )
@@ -69,7 +114,7 @@ def build_deps(audit: AuditSink, llm: FakeLlm, stack: ExitStack, max_info_rounds
     bank_http = stack.enter_context(TestClient(create_mock_bank(bank_engine)))
     return Deps(
         audit=audit,
-        kyc=KycClient(client=kyc_http, sleep=lambda _s: None),  # type: ignore[arg-type]  # TestClient is an httpx.Client
+        kyc=kyc,
         index=SanctionsIndex.load(ROOT / "data" / "sanctions"),
         screening_cfg=ScreeningConfig.load(),
         reference=Reference.load(),
@@ -81,7 +126,8 @@ def build_deps(audit: AuditSink, llm: FakeLlm, stack: ExitStack, max_info_rounds
 
 
 def build_offline_env(
-    llm: FakeLlm | None = None,
+    llm: FakeLlm | RecordingLlm | None = None,
+    kyc: KycClient | None = None,
     max_info_rounds: int = 2,
     audit: MemoryAuditLog | None = None,
     documents: DocumentStore | None = None,
@@ -89,7 +135,7 @@ def build_offline_env(
     stack = ExitStack()
     audit = audit or MemoryAuditLog()
     llm = llm or FakeLlm()
-    deps = build_deps(audit, llm, stack, max_info_rounds)
+    deps = build_deps(audit, llm, stack, max_info_rounds, kyc)
     engine = create_engine(
         "sqlite+pysqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
     )
@@ -113,7 +159,7 @@ class RunResult:
     first_pass: CaseState | None  # the state at the first approval pause
     trajectory: list[str]
     audit: MemoryAuditLog
-    llm: FakeLlm
+    llm: FakeLlm | RecordingLlm
     env: OfflineEnv
 
     @property
@@ -150,16 +196,24 @@ def trajectory_from_audit(rows: list[AuditRow], case_id: str) -> list[str]:
     return out
 
 
-def _docs(items: list[Any]) -> list[UploadedDoc]:
-    return [
-        UploadedDoc(doc_type=d.doc_type, content=d.content.encode(), filename="specimen.txt") for d in items
-    ]
-
-
-def run_case(case: Case, llm: FakeLlm | None = None, full: bool = False) -> RunResult:
+def run_case(
+    case: Case,
+    llm: FakeLlm | RecordingLlm | None = None,
+    full: bool = False,
+    kyc: KycClient | None = None,
+    doc_factory: DocFactory = text_document,
+) -> RunResult:
     """Submit a fixture case. With `full=True`, also play the fixture's human script to the end."""
-    env = build_offline_env(llm or FakeLlm(unavailable=case.llm_mode == "unavailable"))
+    env = build_offline_env(llm or FakeLlm(unavailable=case.llm_mode == "unavailable"), kyc=kyc)
     svc = env.service
+
+    def _docs(items: list[CaseDocument]) -> list[UploadedDoc]:
+        out = []
+        for d in items:
+            content, filename = doc_factory(case, d)
+            out.append(UploadedDoc(doc_type=d.doc_type, content=content, filename=filename))
+        return out
+
     view = svc.create_case(case.applicant, _docs(case.documents), SUBMITTER, case_id=case.id)
     first_pass = view.state.model_copy(deep=True) if view.state else None
     if full:

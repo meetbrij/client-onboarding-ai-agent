@@ -226,7 +226,7 @@ jobs:
         run: |
           uv run ruff check .
           uv run ruff format --check .
-          uv run mypy app tests scripts
+          uv run mypy app tests scripts evals
 
   test:
     name: Test
