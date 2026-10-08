@@ -2,7 +2,7 @@
 
 An agentic onboarding workflow for a bank-style client application: LangGraph, a KYC extraction tool, sanctions screening, deterministic risk rules, a **human approval gate**, and an idempotent call to a mock core-banking API. Every step leaves an entry in a tamper-evident, append-only audit log. It runs on AWS EKS through GitHub Actions with approval-gated promotion.
 
-> **Status (2026-10-08): built, deployed to `qa` and `prod` on EKS through the GitHub Actions pipeline, used by hand, and evaluated once against the live KYC service.** The full workflow, the officer UI, the audit chain, the document store, Terraform, manifests and both pipelines are done. The first live evaluation (12 synthetic cases, 2026-10-08) passed **10 of 12**; the two misses are explained under [Evaluation](#evaluation) and are a finding about the test inputs, not a workflow fault. The model API behind both the KYC service and our advisory LLM is currently the **Anthropic API, for synthetic data only**, because the Bedrock quota in the AWS account is zero; Bedrock remains the target for any real deployment (see [docs/MODEL_INVENTORY.md](docs/MODEL_INVENTORY.md)). Every number here comes from [evals/results/2026-10-08-live.json](evals/results/2026-10-08-live.json) and is checked by `scripts/check_numbers.py`. Plan: [docs/PLAN.md](docs/PLAN.md); accepted gaps: [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md).
+> **Status (2026-10-08): complete for now, and closed as a portfolio project.** Built, deployed to `qa` and `prod` on EKS through the GitHub Actions pipelines, and tested end to end by hand in both (submitter and officer roles, with live document extraction and LLM wording through P3's KYC service and the Anthropic API). One live evaluation of 12 synthetic cases (2026-10-08) passed **10 of 12**; the two misses are a finding about the test inputs, not a workflow fault (see [Evaluation](#evaluation)). The model API is currently the **Anthropic API, for synthetic data only**, because the Bedrock quota in the AWS account is zero; Bedrock remains the target for any real deployment ([docs/MODEL_INVENTORY.md](docs/MODEL_INVENTORY.md)). Every number here comes from [evals/results/2026-10-08-live.json](evals/results/2026-10-08-live.json) and is checked by `scripts/check_numbers.py`. What is not done is listed under [Known gaps](#known-gaps-and-open-dependencies); to operate it, see the [runbook](docs/RUNBOOK.md).
 
 ## Intro
 
@@ -157,7 +157,7 @@ flowchart TD
     APIP -. HTTPS .-> LF
 ```
 
-*The KYC service is reached by its cross-namespace service name (`nodejs-service.<env>.svc.cluster.local`). P3 does not enable an API key on it yet; see "Known gaps" below.*
+*The KYC service is reached by its cross-namespace service name (`nodejs-service.<env>.svc.cluster.local`). P3 requires an `X-API-Key`, which our API reads from the `kyc-api-key` secret.*
 
 ### Secrets management
 
@@ -166,7 +166,7 @@ External Secrets Operator runs once per cluster (P3). Each of our namespaces has
 ```mermaid
 flowchart LR
     subgraph AWS[AWS]
-        SMQ[(Secrets Manager<br/>qa/onboarding/pg-secret<br/>qa/onboarding/app-secret<br/>qa/onboarding/langfuse-keys)]
+        SMQ[(Secrets Manager<br/>qa/onboarding/pg-secret<br/>qa/onboarding/app-secret<br/>qa/onboarding/langfuse-keys<br/>qa/onboarding/kyc-api-key<br/>qa/onboarding/anthropic-api-key)]
         SMP[(Secrets Manager<br/>prod/onboarding/...)]
         IAMQ[IAM role: ESO onboarding-qa<br/>reads qa/onboarding/* only]
         IAMP[IAM role: ESO onboarding-prod<br/>reads prod/onboarding/* only]
@@ -367,7 +367,9 @@ The full list with reasons is [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS
 
 - **Bedrock quota is zero in the AWS account.** To get evaluated and demonstrated, the KYC service and our advisory LLM both call the Anthropic API directly (D-26). That route sends documents and prompts to a third party and is acceptable only because every document is synthetic and marked SPECIMEN; it is not suitable for real customer data. Bedrock is a one-line configuration switch on both sides and has not run end to end here.
 - **One live evaluation, 12 cases:** see the caveats under Evaluation. Extraction accuracy was measured only on clean specimens; adversarial and genuinely poor documents are untested.
-- **Bedrock and Langfuse Cloud were never called for real** (no quota, no project keys). The code is tested with stubs and the real Langfuse SDK against an in-memory exporter. The deployed QA and prod environments do not yet have the KYC API key or an Anthropic key, so deployed cases still show "extraction unavailable"; the live evaluation ran from a laptop.
+- **Bedrock and Langfuse Cloud were never called for real** (no quota, no project keys). The code is tested with stubs and the real Langfuse SDK against an in-memory exporter; Langfuse tracing and prompt management are off in the deployed environments.
+- **Cluster headroom:** the cluster is shared with P3 and has two small nodes, tight on CPU requests; a pod pinned to one zone (Postgres) can stay Pending after a restart. See the [runbook](docs/RUNBOOK.md).
+- **Approval is blocked when extraction is unavailable**, by design; the "manually verified" attestation that would allow it was considered and not built.
 - **Scans report only** (as in P3); see CI/CD above for what is and is not enforced.
 - **CBUAE text:** see Controls. Topics only, no clause numbers, until the PDF is supplied.
 - **Matching scope:** a demo-scale fuzzy scorer, not a screening-vendor replacement; a middle name left out can slip under the threshold, and transliterated names can raise false positives.
@@ -385,6 +387,7 @@ The full list with reasons is [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS
 | [docs/CONTROLS.md](docs/CONTROLS.md) | CBUAE guidance mapping, gaps, PDPL and UAE region notes |
 | [docs/EVALS.md](docs/EVALS.md) | The 12 cases, metrics, rubric, how to run the deterministic and live evals |
 | [docs/DEMO.md](docs/DEMO.md) | A two-minute demo script |
+| [docs/RUNBOOK.md](docs/RUNBOOK.md) | Operating it: health checks, deploys, secrets, incidents, recovery |
 | [docs/MODEL_INVENTORY.md](docs/MODEL_INVENTORY.md) | The LLM roles, prompts, the deterministic decision components, third-party services |
 | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | Accepted gaps, kept honest |
 | [infra/terraform/README.md](infra/terraform/README.md) | Applying the infrastructure, setting secrets, GitHub settings, recovery |
@@ -402,6 +405,8 @@ The full list with reasons is [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS
 | 4+ | Fixes and additions found in use: non-blocking API, busy state in the UI, officer access to original documents (D-24), `make check`, safe secret setting | done |
 | 3b | Evals against the live KYC service | **done** (2026-10-08): 10 of 12 |
 | 5 | Real eval numbers, controls evidence, model inventory, demo script | **done**; screenshots and a recorded clip not made |
+| 6 | Deployed extraction: API keys as secrets, Anthropic backend in the manifests (D-26) | **done**: verified end to end in `qa` and `prod` |
+| Next (not started) | Langfuse keys and dataset linking; Bedrock run of the evals once quota exists; a second eval run with harder specimens; CBUAE headings from the PDF; screenshots and a clip | open |
 
 ## License
 
