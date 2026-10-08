@@ -1,9 +1,17 @@
 # Evals
 
-Status: **design only, and deferred until P3's KYC service is live (D-15, Phase 3b). No eval has been run; there are no numbers.**
-When it runs, cases go through the live KYC service with SPECIMEN documents, so `kyc_response` below becomes a recorded
-fallback for unit tests only, and extraction quality becomes part of what is measured end to end. README may quote only values from files in
-`evals/results/`.
+Status (2026-10-08): **one live run done: 10 of 12 cases pass** (README "Evaluation" has the table and the explanation of the two misses; the raw data is
+`evals/results/2026-10-08-live.json`). A deterministic run (recorded KYC responses, fake LLM) gates CI at 100%. Only values from files in `evals/results/` may appear in
+the README, and `scripts/check_numbers.py` (also a test) enforces it.
+
+How it runs: `python -m evals.run --deterministic` (no network) or `python -m evals.run --live --kyc-url <P3 KYC URL>` with `KYC_API_KEY` and `ANTHROPIC_API_KEY` in the
+environment. In live mode the fixtures' documents are rendered as SPECIMEN PNG images (`evals/specimen.py`) from their recorded field values and sent to the real KYC
+service; our advisory LLM calls go to the Anthropic API (D-26, Bedrock quota is zero); the `llm_unavailable` and `kyc_unavailable` cases still force their outage. The
+result file records the mode, the KYC models the service reported, the LLM and judge models, the sanctions snapshot and per-case tokens and timing. Not done: Langfuse
+dataset linking (no project keys yet), so the file says "not used in this run".
+
+Lessons from the first run: (1) the live KYC service read deliberately blurred specimens perfectly, so the two cases that expect low-confidence fields fail for a reason
+about the inputs, not the workflow; (2) the Sonnet-class judge returns no text when its token budget is small, because it thinks first (the judge now gets 3000).
 
 ## What is being measured, and what is not
 Measured: whether the workflow reaches the right recommendation, risk rating, sanctions hits and node sequence on 12
@@ -93,7 +101,7 @@ judge model, rubric version and the judge prompt version.
 ## Harness design
 - `evals/run.py --deterministic`: fake LLM (fixed text per role), fake KYC server from `kyc_response`, in-memory or ephemeral
   Postgres, human script applied through the real resume path. No network. Used in CI and in `make test-evals`.
-- `evals/run.py --live`: real Bedrock for LLM roles, Langfuse on, KYC still recorded (D-15); judge on unless `--no-judge`.
+- `evals/run.py --live`: real KYC service, real LLM (Anthropic API while Bedrock quota is zero; Bedrock when it is not), judge on unless `--no-judge`. Langfuse linking not built.
 - Human step: the harness calls the same resume API with the scripted decision (so interrupt-bound resume is exercised).
 - Trajectory comes from audit rows, so the eval also checks the audit trail, and node span names in Langfuse equal audit node
   names (one shared constant).
