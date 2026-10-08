@@ -1,4 +1,4 @@
-.PHONY: setup test lint typecheck check up down sanctions
+.PHONY: setup test lint typecheck check evals up down sanctions
 setup:
 	uv sync
 	@[ -f .env ] || cp .env.example .env
@@ -22,3 +22,7 @@ down:
 	docker compose down -v
 sanctions:
 	uv run python scripts/load_sanctions.py
+
+# The deterministic eval gate (recorded KYC responses, fake LLM, no network). The live run needs keys: see docs/EVALS.md.
+evals:
+	uv run python -m evals.run --deterministic --out /tmp/eval-deterministic.json

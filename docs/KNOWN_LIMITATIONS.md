@@ -62,3 +62,7 @@ Accepted gaps, kept honest. Add an entry whenever a decision knowingly leaves so
   restore steps in the infrastructure README, and Postgres does not pick up changed passwords by itself.
 - **Approval is blocked whenever extraction is unavailable,** even if an officer has verified the originals by eye. A "manually verified" attestation (audited, with a note) is proposed in
   PLAN.md and not built.
+- **Deployed QA and prod cannot extract yet.** The deployed API has no `KYC_API_KEY` (P3 now requires one) and no `ANTHROPIC_API_KEY`, so deployed cases still show "extraction unavailable" and summaries use templates. The live evaluation ran from a laptop. `scripts/set_secrets.sh` does not add keys to an existing `app-secret` without replacing its tokens; a dedicated secret and manifest change is the clean fix and is not built.
+- **The Anthropic API route is for synthetic data only** (D-26): documents (through P3) and prompts leave AWS. Bedrock is the target and has not run end to end here.
+- **One live evaluation, 12 cases, one model, clean specimens.** The two misses show the live model reads blurred specimens better than the fixtures assume. No adversarial documents, no real-world accuracy, no Langfuse dataset linking.
+

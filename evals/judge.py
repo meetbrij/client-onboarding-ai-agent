@@ -28,7 +28,8 @@ SYSTEM = (
 def judge_draft(client: LlmClient, missing: list[str], draft: str) -> dict[str, Any]:
     user = f"MISSING DOCUMENTS: {', '.join(missing)}\n\nDRAFT:\n{draft}"
     try:
-        out = client.complete("judge", SYSTEM, user, max_tokens=3000)  # the judge model may think first; a small budget returns no text
+        # The judge model may think first; a small token budget then returns no text at all.
+        out = client.complete("judge", SYSTEM, user, max_tokens=3000)
     except LlmUnavailable as exc:
         return {"error": str(exc)}
     m = re.search(r"\{.*\}", out.text, re.S)
