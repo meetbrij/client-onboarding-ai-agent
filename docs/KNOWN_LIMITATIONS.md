@@ -62,7 +62,8 @@ Accepted gaps, kept honest. Add an entry whenever a decision knowingly leaves so
   restore steps in the infrastructure README, and Postgres does not pick up changed passwords by itself.
 - **Approval is blocked whenever extraction is unavailable,** even if an officer has verified the originals by eye. A "manually verified" attestation (audited, with a note) is proposed in
   PLAN.md and not built.
-- **Deployed extraction needs two keys per environment** (`kyc-api-key`, `anthropic-api-key`, set with `scripts/set_secrets.sh`; see the infrastructure README). Until they are set, cases show "extraction unavailable" and summaries use templates. The API's LLM backend is the Anthropic API (D-26), so the `anthropic-api-key` setting is required for the pod to start.
+- **Deployed extraction depends on two per-environment keys** (`kyc-api-key` for P3's KYC service, `anthropic-api-key` for our advisory LLM; set with `scripts/set_secrets.sh`). The API pod will not start without the Anthropic key while `LLM_BACKEND=anthropic`; rotating either key is manual (see the runbook). Both keys are plain Secrets Manager values synced hourly by External Secrets.
 - **The Anthropic API route is for synthetic data only** (D-26): documents (through P3) and prompts leave AWS. Bedrock is the target and has not run end to end here.
 - **One live evaluation, 12 cases, one model, clean specimens.** The two misses show the live model reads blurred specimens better than the fixtures assume. No adversarial documents, no real-world accuracy, no Langfuse dataset linking.
-
+- **The cluster is small and shared with P3.** Two t3a.large nodes, scheduling by CPU requests. The Postgres volume is pinned to one availability zone, so after a pause and resume or a node replacement its pod can stay Pending when that node is full. We trimmed our pods' requests (Postgres 100m, API 50m, mock bank 25m); a third node (about 55 USD a month, an estimate to check against AWS pricing) or lower requests on P3's pods is the lasting fix.
+- **Tracing and prompt management are off in the deployed environments** (no Langfuse keys): prompts come from the image and no traces are sent.
