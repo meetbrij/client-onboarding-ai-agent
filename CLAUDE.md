@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude Code in this repository. Status (2026-10-08): **All phases done. Deployed to `qa` and `prod` on EKS via the pipelines; first live eval (2026-10-08) passed 10 of 12 cases (`evals/results/2026-10-08-live.json`); README numbers are checked by `scripts/check_numbers.py`.** The workflow (intake to execute, officer pause, document loop, crash-safe resume), Postgres checkpointer, hash-chained audit log, API, officer UI, document store, Langfuse tracing and prompt management are built. Bedrock and Langfuse Cloud have not been called for real (zero quota, no keys); the live eval used the Anthropic API (D-26, synthetic data only): they are tested with the real SDK against an in-memory exporter, and with stubs. See `docs/PLAN.md` "Where things stand".
+Guidance for Claude Code in this repository. Current status, what is done and what is pending: `docs/PLAN.md` ("Where things stand"). Operating the deployed service: `docs/RUNBOOK.md`. The workflow, checkpointer, audit chain, API, officer UI and document store are built; the LLM backend is the Anthropic API for now (D-26, synthetic data only) and Bedrock remains the target.
 Build phase by phase as in `docs/PLAN.md`; decisions in `docs/DECISIONS.md` are accepted unless marked otherwise.
 
 ## Purpose
@@ -31,7 +31,7 @@ Every node writes an audit row. LLM calls are only the four listed in Hard rules
 
 ## Repo layout
 ```
-CLAUDE.md  README.md  docs/{PLAN,CONTROLS,DECISIONS,EVALS,MODEL_INVENTORY}.md  docs/adr/
+CLAUDE.md  README.md  docs/{PLAN,CONTROLS,DECISIONS,EVALS,MODEL_INVENTORY,RUNBOOK,DEMO,KNOWN_LIMITATIONS}.md  docs/adr/
 app/onboarding/        models, decision (the guard), service (CaseService), store (cases table), locks, db (migrate/purge),
                        graph/ (nodes, routes, build), rules/, screening/, audit/, llm/, tools/ (kyc, bank, buffer),
                        api/ (main, ui, templates, static), auth, config, bootstrap, observability, langfuse_tracing
